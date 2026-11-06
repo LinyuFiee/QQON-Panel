@@ -1,0 +1,267 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# No write token outside the publication job. Broad-looking tags are validated
+# strictly before testing or compiling; prerelease/build suffixes are rejected.
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      tag: ${{ steps.identity.outputs.tag }}
+      repository: ${{ steps.identity.outputs.repository }}
+      commit: ${{ steps.identity.outputs.commit }}
+      build_time: ${{ steps.identity.outputs.build_time }}
+    steps:
+      # Official API verification: https://api.github.com/repos/actions/checkout/git/ref/tags/v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          submodules: false
+
+      - name: Validate stable tag and checked-out commit
+        id: identity
+        env:
+          TZ: UTC
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python3 -I - <<'PY'
+          import importlib.util
+          import os
+          from pathlib import Path
+          import subprocess
+
+          root = Path(os.environ["GITHUB_WORKSPACE"])
+          spec = importlib.util.spec_from_file_location("panel_build_release", root / "tools/build_release.py")
+          release = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(release)
+          tag = os.environ["RELEASE_TAG"]
+          repository = os.environ["RELEASE_REPOSITORY"]
+          release.validate_version(tag)
+          release.validate_repository(repository)
+          event_sha = release.validate_commit(os.environ["EVENT_SHA"])
+
+          def git(*arguments):
+              return subprocess.run(["git", *arguments], cwd=root, check=True, capture_output=True,
+                                    text=True, timeout=30).stdout.strip()
+
+          head = release.validate_commit(git("rev-parse", "--verify", "HEAD^{commit}"))
+          tagged = release.validate_commit(git("rev-parse", "--verify", "refs/tags/" + tag + "^{commit}"))
+          event_commit = release.validate_commit(git("rev-parse", "--verify", event_sha + "^{commit}"))
+          if head != tagged or head != event_commit:
+              raise SystemExit("tag, workflow event and checked-out commit do not match")
+          build_time = release.validate_build_time(git("show", "-s", "--date=format-local:%Y-%m-%dT%H:%M:%SZ",
+                                                      "--format=%cd", head))
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8", newline="\n") as output:
+              for key, value in {"tag": tag, "repository": repository, "commit": head, "build_time": build_time}.items():
+                  output.write(key + "=" + value + "\n")
+          PY
+
+      # Official API verification: https://api.github.com/repos/actions/setup-go/git/ref/tags/v5.5.0
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          # Build releases with the current patched stable toolchain;
+          # go.mod remains the minimum language/API version.
+          go-version: stable
+          cache: false
+          check-latest: true
+
+      - name: Unit tests, vet, and Linux race detector
+        env:
+          TZ: UTC
+          GOTOOLCHAIN: local
+        run: |
+          set -euo pipefail
+          python3 -I -m unittest discover -s tools/tests -p 'test_*.py' -v
+          python3 -I -m unittest discover -s scripts/tests -p 'test_*.py' -v
+          bash -n scripts/install.sh
+          bash -n scripts/update.sh
+          go test ./...
+          go vet ./...
+          CGO_ENABLED=1 go test -race ./...
+
+      - name: Build and verify exact release assets
+        env:
+          RELEASE_TAG: ${{ steps.identity.outputs.tag }}
+          RELEASE_REPOSITORY: ${{ steps.identity.outputs.repository }}
+          RELEASE_COMMIT: ${{ steps.identity.outputs.commit }}
+          RELEASE_BUILD_TIME: ${{ steps.identity.outputs.build_time }}
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/panel-release-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          python3 -I tools/build_release.py \
+            --version "$RELEASE_TAG" --repo "$RELEASE_REPOSITORY" --commit "$RELEASE_COMMIT" \
+            --build-time "$RELEASE_BUILD_TIME" --go "$(command -v go)" --output "$output"
+          python3 -I - "$output" <<'PY'
+          import importlib.util
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+          import tempfile
+
+          root = Path(os.environ["GITHUB_WORKSPACE"])
+          spec = importlib.util.spec_from_file_location("panel_build_release", root / "tools/build_release.py")
+          release = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(release)
+          output = Path(sys.argv[1])
+          manifest = release.verify_release(version=os.environ["RELEASE_TAG"],
+                                           repository=os.environ["RELEASE_REPOSITORY"],
+                                           commit=os.environ["RELEASE_COMMIT"],
+                                           build_time=os.environ["RELEASE_BUILD_TIME"], output=output)
+          record = next(binary for binary in manifest["binaries"] if binary["arch"] == "amd64")
+          # Only this job's trusted local build is run, from a separate private
+          # directory after bounded gzip/USTAR/hash/ELF verification. Never tar -xf.
+          with tempfile.TemporaryDirectory(prefix="panel-local-build-info-") as temporary:
+              binary = release.extract_archive(output / record["archive"]["name"], record, Path(temporary) / "panel")
+              info = json.loads(subprocess.run([str(binary), "-build-info"], cwd=root,
+                                check=True, capture_output=True, text=True, timeout=15).stdout)
+          expected = {key: manifest[key] for key in ("version", "commit", "buildTime", "repository", "dataSchema")}
+          expected.update(os="linux", arch="amd64")
+          if info != expected:
+              raise SystemExit("amd64 -build-info differs from release.json")
+          PY
+          python3 -I tools/build_release.py --verify-only \
+            --version "$RELEASE_TAG" --repo "$RELEASE_REPOSITORY" --commit "$RELEASE_COMMIT" \
+            --build-time "$RELEASE_BUILD_TIME" --output "$output"
+
+      # Official API verification: https://api.github.com/repos/actions/upload-artifact/git/ref/tags/v4.6.2
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: panel-release-assets
+          path: |
+            ${{ runner.temp }}/panel-release-${{ github.run_id }}-${{ github.run_attempt }}/panel-linux-amd64.tar.gz
+            ${{ runner.temp }}/panel-release-${{ github.run_id }}-${{ github.run_attempt }}/panel-linux-arm64.tar.gz
+            ${{ runner.temp }}/panel-release-${{ github.run_id }}-${{ github.run_attempt }}/install.sh
+            ${{ runner.temp }}/panel-release-${{ github.run_id }}-${{ github.run_attempt }}/update.sh
+            ${{ runner.temp }}/panel-release-${{ github.run_id }}-${{ github.run_attempt }}/release.json
+            ${{ runner.temp }}/panel-release-${{ github.run_id }}-${{ github.run_attempt }}/SHA256SUMS
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 7
+          compression-level: 0
+
+  publish:
+    needs: test-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.test-build.outputs.commit }}
+          persist-credentials: false
+          submodules: false
+
+      # Official API verification: https://api.github.com/repos/actions/download-artifact/git/ref/tags/v4.3.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: panel-release-assets
+          path: ${{ runner.temp }}/publish-assets
+
+      - name: Reverify downloaded assets without executing them
+        env:
+          RELEASE_TAG: ${{ needs.test-build.outputs.tag }}
+          RELEASE_REPOSITORY: ${{ needs.test-build.outputs.repository }}
+          RELEASE_COMMIT: ${{ needs.test-build.outputs.commit }}
+          RELEASE_BUILD_TIME: ${{ needs.test-build.outputs.build_time }}
+        run: |
+          set -euo pipefail
+          python3 -I tools/build_release.py --verify-only \
+            --version "$RELEASE_TAG" --repo "$RELEASE_REPOSITORY" --commit "$RELEASE_COMMIT" \
+            --build-time "$RELEASE_BUILD_TIME" --output "$RUNNER_TEMP/publish-assets"
+
+      - name: Create draft, upload, check assets, then publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_HOST: github.com
+          GH_PROMPT_DISABLED: '1'
+          RELEASE_TAG: ${{ needs.test-build.outputs.tag }}
+          RELEASE_REPOSITORY: ${{ needs.test-build.outputs.repository }}
+          RELEASE_COMMIT: ${{ needs.test-build.outputs.commit }}
+        run: |
+          set -euo pipefail
+          assets="$RUNNER_TEMP/publish-assets"
+          remote_ref="$RUNNER_TEMP/panel-remote-tag-$GITHUB_RUN_ATTEMPT.json"
+          gh api "repos/$RELEASE_REPOSITORY/git/ref/tags/$RELEASE_TAG" > "$remote_ref"
+          python3 -I - "$remote_ref" <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+          import sys
+
+          reference = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          if reference.get("ref") != "refs/tags/" + os.environ["RELEASE_TAG"]:
+              raise SystemExit("remote tag name changed")
+          target = reference["object"]
+          for _ in range(8):
+              sha = target.get("sha", "")
+              if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", sha):
+                  raise SystemExit("invalid remote tag object SHA")
+              if target.get("type") == "commit":
+                  if sha != os.environ["RELEASE_COMMIT"]:
+                      raise SystemExit("remote tag no longer points at the tested commit")
+                  break
+              if target.get("type") != "tag":
+                  raise SystemExit("remote tag must resolve to a commit")
+              response = subprocess.run(["gh", "api", "repos/" + os.environ["RELEASE_REPOSITORY"] + "/git/tags/" + sha],
+                                        check=True, capture_output=True, text=True, timeout=30)
+              target = json.loads(response.stdout)["object"]
+          else:
+              raise SystemExit("too many nested annotated tags")
+          PY
+          # Existing draft/published releases are not overwritten; a failed upload
+          # leaves a draft for a maintainer to inspect, never an incomplete latest.
+          gh release create "$RELEASE_TAG" --repo "$RELEASE_REPOSITORY" \
+            --verify-tag --target "$RELEASE_COMMIT" --draft --title "$RELEASE_TAG" --generate-notes
+          gh release upload "$RELEASE_TAG" --repo "$RELEASE_REPOSITORY" \
+            "$assets/panel-linux-amd64.tar.gz" "$assets/panel-linux-arm64.tar.gz" \
+            "$assets/install.sh" "$assets/update.sh" "$assets/release.json" "$assets/SHA256SUMS"
+          remote_release="$RUNNER_TEMP/panel-remote-release-$GITHUB_RUN_ATTEMPT.json"
+          gh release view "$RELEASE_TAG" --repo "$RELEASE_REPOSITORY" \
+            --json tagName,isDraft,assets > "$remote_release"
+          python3 -I - "$assets" "$remote_release" <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import sys
+
+          output, response = map(Path, sys.argv[1:])
+          release = json.loads(response.read_text(encoding="utf-8"))
+          names = {"panel-linux-amd64.tar.gz", "panel-linux-arm64.tar.gz", "install.sh", "update.sh", "release.json", "SHA256SUMS"}
+          assets = release.get("assets", [])
+          if release.get("tagName") != os.environ["RELEASE_TAG"] or release.get("isDraft") is not True:
+              raise SystemExit("expected an unpublished draft for this tag")
+          if len(assets) != len(names) or {asset.get("name") for asset in assets} != names:
+              raise SystemExit("draft does not contain exactly the six expected assets")
+          for asset in assets:
+              if asset.get("state") != "uploaded" or asset.get("size") != (output / asset["name"]).stat().st_size:
+                  raise SystemExit("draft asset upload is incomplete or has the wrong size")
+          PY
+          gh release edit "$RELEASE_TAG" --repo "$RELEASE_REPOSITORY" --draft=false --latest

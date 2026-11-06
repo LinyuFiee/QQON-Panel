@@ -1,0 +1,51 @@
+# Review before installing. This example does not create users or modify the host.
+# Create an unprivileged server-panel account and owner-only state directory first.
+# Keep the listener private; terminate HTTPS at a separate reverse proxy.
+# An HTTPS proxy must preserve Host and Origin. Replace the example domain.
+[Unit]
+Description=Single-process server panel
+After=network.target
+
+[Service]
+Type=simple
+User=server-panel
+Group=server-panel
+StateDirectory=server-panel
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/server-panel
+ExecStart=/usr/local/bin/panel -listen 127.0.0.1:5173 -origin https://panel.example.com -data-dir /var/lib/server-panel
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15s
+UMask=0077
+
+# Weighting leaves priority to hosted business services without a tight CPU quota.
+Nice=10
+CPUWeight=20
+IOWeight=20
+MemoryHigh=80M
+MemoryMax=128M
+TasksMax=96
+LimitNOFILE=512
+Environment=GOMEMLIMIT=64MiB
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictNamespaces=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# Default: files and Docker disabled. Add a narrowly scoped -file-root only after review.
+# ProtectHome may intentionally prevent rootless sockets beneath a home directory.
+# Granting any Docker socket changes the threat model; do not simply run as root.
+
+[Install]
+WantedBy=multi-user.target

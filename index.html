@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f5f7f6" />
+    <title>服务器面板 · 登录</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./api.js" defer></script>
+    <script src="./app.js" defer></script>
+  </head>
+  <body>
+    <svg class="svg-defs" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <defs>
+        <symbol id="icon-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></symbol>
+        <symbol id="icon-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18Z"/></symbol>
+        <symbol id="icon-folder" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/><path d="M3 9h18"/></symbol>
+        <symbol id="icon-box" viewBox="0 0 24 24"><path d="m12 3 9 5v9l-9 5-9-5V8l9-5ZM3 8l9 5 9-5M12 13v9M7.5 5.5l9 5"/></symbol>
+        <symbol id="icon-settings" viewBox="0 0 24 24"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8m7.2 7.2 2.8 2.8M5.6 18.4l2.8-2.8m7.2-7.2 2.8-2.8"/><circle cx="12" cy="12" r="5"/></symbol>
+        <symbol id="icon-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+        <symbol id="icon-server" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01M11 6.5h6M11 17.5h6"/></symbol>
+        <symbol id="icon-cpu" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="3"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></symbol>
+        <symbol id="icon-memory" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="11" rx="2"/><path d="M6 10v3M10 10v3M14 10v3M18 10v3M6 17v3M10 17v3M14 17v3M18 17v3"/></symbol>
+        <symbol id="icon-disk" viewBox="0 0 24 24"><path d="m3 14 3-10h12l3 10"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 16.5h.01M11 16.5h.01"/></symbol>
+        <symbol id="icon-network" viewBox="0 0 24 24"><path d="M8 20V4m-4 4 4-4 4 4M16 4v16m-4-4 4 4 4-4"/></symbol>
+        <symbol id="icon-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+        <symbol id="icon-shield" viewBox="0 0 24 24"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z"/><path d="m8 12 3 3 5-6"/></symbol>
+        <symbol id="icon-file" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9l-6-6ZM14 3v6h6M8 13h8M8 17h5"/></symbol>
+        <symbol id="icon-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></symbol>
+        <symbol id="icon-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+        <symbol id="icon-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+        <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 7a7 7 0 0 1 12 0l2 5M4 12l2 5a7 7 0 0 0 12 0"/></symbol>
+        <symbol id="icon-logout" viewBox="0 0 24 24"><path d="M9 4H4v16h5M9 12h12m-4-4 4 4-4 4"/></symbol>
+      </defs>
+    </svg>
+
+    <a class="skip-link" href="#main-content">跳到主要内容</a>
+    <section class="auth-gate" id="auth-gate" aria-labelledby="gate-title">
+      <div class="panel auth-card" id="gate-content" tabindex="-1">
+        <h1 id="gate-title">连接面板后端</h1>
+        <p class="muted" role="status">正在检查初始化与登录状态…</p>
+        <noscript>请启用 JavaScript。此面板必须连接其后端服务，不能在静态预览中登录。</noscript>
+      </div>
+    </section>
+
+    <div id="panel-app" hidden>
+      <div class="sidebar-overlay" id="sidebar-overlay" hidden></div>
+      <aside class="sidebar" id="sidebar" aria-label="主导航">
+        <a class="account-link" href="#account" data-page="account">
+          <span class="account-icon"><svg class="icon" aria-hidden="true"><use href="#icon-shield"/></svg></span>
+          <span><strong>个人与安全</strong><span id="account-username">未登录</span></span>
+          <svg class="icon account-chevron" aria-hidden="true"><use href="#icon-chevron"/></svg>
+        </a>
+        <div class="nav-section-label">服务器</div>
+        <nav class="main-nav" aria-label="页面导航">
+          <a class="nav-link" href="#overview" data-page="overview"><svg class="icon" aria-hidden="true"><use href="#icon-grid"/></svg><span>概览</span></a>
+          <a class="nav-link" href="#websites" data-page="websites"><svg class="icon" aria-hidden="true"><use href="#icon-globe"/></svg><span>网站</span></a>
+          <a class="nav-link" href="#files" data-page="files"><svg class="icon" aria-hidden="true"><use href="#icon-folder"/></svg><span>文件</span></a>
+          <a class="nav-link" href="#services" data-page="services"><svg class="icon" aria-hidden="true"><use href="#icon-server"/></svg><span>服务</span></a>
+          <a class="nav-link" href="#sources" data-page="sources"><svg class="icon" aria-hidden="true"><use href="#icon-settings"/></svg><span>应用与源</span></a>
+          <a class="nav-link" href="#docker" data-page="docker"><svg class="icon" aria-hidden="true"><use href="#icon-box"/></svg><span>Docker</span></a>
+          <a class="nav-link" href="#updates" data-page="updates"><svg class="icon" aria-hidden="true"><use href="#icon-refresh"/></svg><span>面板更新</span></a>
+        </nav>
+        <div class="sidebar-bottom">
+          <button class="nav-link" type="button" data-action="preferences"><svg class="icon" aria-hidden="true"><use href="#icon-settings"/></svg><span>显示设置</span></button>
+          <button class="nav-link" type="button" data-action="logout"><svg class="icon" aria-hidden="true"><use href="#icon-logout"/></svg><span>退出登录</span></button>
+        </div>
+      </aside>
+
+      <div class="app-shell">
+        <header class="topbar">
+          <div class="topbar-left">
+            <button class="icon-button mobile-menu" id="menu-toggle" type="button" aria-label="打开导航" aria-controls="sidebar" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="#icon-menu"/></svg></button>
+            <div class="breadcrumb"><span>服务器面板</span><span class="breadcrumb-slash">/</span><strong id="breadcrumb-current">概览</strong></div>
+          </div>
+          <div class="topbar-actions"><span class="connection-label" id="connection-label">已登录</span><a class="text-link" href="#account" id="header-username">个人与安全</a></div>
+        </header>
+        <main id="main-content" tabindex="-1"></main>
+        <footer class="app-footer"><span>同源 API · Cookie 会话</span><span id="refresh-status">自动刷新仅在页面可见时运行</span></footer>
+      </div>
+    </div>
+
+    <dialog class="detail-dialog" id="detail-dialog" aria-labelledby="dialog-title">
+      <div class="dialog-header">
+        <h2 id="dialog-title"></h2>
+        <button class="icon-button" type="button" id="dialog-close" aria-label="关闭对话框"><svg class="icon" aria-hidden="true"><use href="#icon-close"/></svg></button>
+      </div>
+      <div id="dialog-content"></div>
+      <div class="dialog-footer" id="dialog-footer"><button class="button" type="button" data-action="close-dialog">关闭</button></div>
+    </dialog>
+    <div class="toast" id="toast" role="status" hidden></div>
+  </body>
+</html>

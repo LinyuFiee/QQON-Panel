@@ -1,0 +1,31 @@
+# Private local data, settings, and credentials (never release inputs).
+/.zcode/
+/state/
+/verification/
+*.pem
+*.key
+/.env
+/.env.*
+/account.json
+/sources.json
+/setup-token
+/.panel.lock
+/data/
+/runtime/
+
+# Local development coordination and machine-specific helper scripts.
+/IMPLEMENTATION.md
+/UPDATE_CONTRACT.md
+/ARCHIVE_CONTRACT.md
+/tools/prepare_go.py
+/tools/local_smoke.py
+
+# Local binaries, generated release output, and Python bytecode.
+/bin/
+/dist/
+/release-output/
+*.exe
+*.test
+*.out
+__pycache__/
+*.py[cod]
