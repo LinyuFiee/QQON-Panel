@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"panel/internal/auth"
 	"panel/internal/buildinfo"
 	"panel/internal/machine"
+	"panel/internal/platform"
 	"panel/internal/server"
 	"panel/internal/sources"
 	"panel/internal/update"
@@ -27,7 +29,10 @@ type integrationApp struct {
 
 func newIntegrationApp(t testing.TB) *integrationApp {
 	t.Helper()
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "private")
+	if err := platform.PreparePrivateDirectory(dir); err != nil {
+		t.Fatal(err)
+	}
 	authService, err := auth.New(auth.Options{DataDir: dir, SessionTTL: 12 * time.Hour})
 	if err != nil {
 		t.Fatal(err)

@@ -25,7 +25,9 @@ func (f roundTrip) RoundTrip(request *http.Request) (*http.Response, error) { re
 
 func testService(t *testing.T, repository string) *Service {
 	t.Helper()
-	s, err := New(Options{Current: buildinfo.Current("0.3.0", "unknown", "unknown", ""), Repository: repository})
+	current := buildinfo.Current("0.3.0", "unknown", "unknown", "")
+	current.OS, current.Arch = "linux", "amd64"
+	s, err := New(Options{Current: current, Repository: repository})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +88,7 @@ func fixture(version string, schema int) (githubRelease, []byte, []byte, []byte)
 	}
 	sums := []byte(strings.Join(sumLines, "\n") + "\n")
 	release := githubRelease{Tag: m.Tag, PublishedAt: "2026-11-06T00:00:00Z", Body: "<script>never render me as HTML</script>"}
-	for name := range assetLimits {
+	for name := range legacyAssets {
 		size := int64(50)
 		if name == "release.json" {
 			size = int64(len(metadata))

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build or verify the six fixed GitHub Release assets using only the stdlib.
+"""Build or verify the nine fixed format 3 Release assets using only the stdlib.
 
 Run with Python isolated mode (-I). Build output must be a new absolute path
 whose parent already exists. Existing paths are never reused or removed; a
@@ -19,15 +19,19 @@ import struct
 import subprocess
 import tarfile
 import tempfile
+import zipfile
 import zlib
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-ARCHITECTURES = ("amd64", "arm64")
-SCRIPT_LIMITS = {"install.sh": 256 * 1024, "update.sh": 16 * 1024}
+TARGETS = (("linux", "amd64"), ("linux", "arm64"), ("windows", "amd64"))
+SCRIPT_LIMITS = {
+    "install.sh": 512 * 1024, "update.sh": 32 * 1024,
+    "install.ps1": 512 * 1024, "update.ps1": 32 * 1024,
+}
 ASSET_NAMES = (
-    "panel-linux-amd64.tar.gz", "panel-linux-arm64.tar.gz", "install.sh", "update.sh",
-    "release.json", "SHA256SUMS",
+    "panel-linux-amd64.tar.gz", "panel-linux-arm64.tar.gz", "panel-windows-amd64.zip",
+    "install.sh", "update.sh", "install.ps1", "update.ps1", "release.json", "SHA256SUMS",
 )
 MAX_BINARY_SIZE = 64 * 1024 * 1024
 MAX_ARCHIVE_SIZE = 64 * 1024 * 1024
@@ -76,7 +80,7 @@ def validate_build_time(value):
 
 def _identity(version, repository, commit, build_time):
     return {
-        "format": 2,
+        "format": 3,
         "version": validate_version(version),
         "tag": version,
         "repository": validate_repository(repository),
@@ -176,10 +180,56 @@ def _check_static_elf(path, arch, size):
             raise ReleaseError(f"ELF must have load segments and no dynamic section or interpreter: {path.name}")
 
 
-def _binary_record(path, arch):
+def _check_pe(path, size):
+    """Read bounded PE headers only; never load or execute a Windows image."""
+    with path.open("rb") as stream:
+        dos = stream.read(64)
+        if len(dos) != 64 or dos[:2] != b"MZ":
+            raise ReleaseError("expected a Windows amd64 PE executable (MZ header)")
+        offset = struct.unpack_from("<I", dos, 60)[0]
+        if offset < 64 or offset + 24 > size:
+            raise ReleaseError("truncated PE header or invalid offset")
+        stream.seek(offset)
+        header = stream.read(24)
+        if len(header) != 24 or header[:4] != b"PE\0\0":
+            raise ReleaseError("invalid PE signature")
+        machine, sections, _, _, _, optional_size, flags = struct.unpack("<HHIIIHH", header[4:])
+        if (machine != 0x8664 or not 1 <= sections <= 96 or not 112 <= optional_size <= 4096
+                or not flags & 0x0002 or flags & (0x2000 | 0x0100)
+                or offset + 24 + optional_size + sections * 40 > size):
+            raise ReleaseError("expected a PE32+ Windows amd64 executable, not DLL/PE32")
+        optional = stream.read(optional_size)
+        if len(optional) != optional_size or struct.unpack_from("<H", optional)[0] != 0x20b:
+            raise ReleaseError("expected a PE32+ optional header")
+        table = stream.read(sections * 40)
+        if len(table) != sections * 40:
+            raise ReleaseError("truncated PE section table")
+        for index in range(sections):
+            raw_size, raw_offset = struct.unpack_from("<II", table, index * 40 + 16)
+            if raw_size and (raw_offset < offset + 24 + optional_size + sections * 40
+                             or raw_offset + raw_size > size):
+                raise ReleaseError("PE section lies outside the executable")
+
+
+def _check_binary(path, target_os, arch, size):
+    if (target_os, arch) not in TARGETS:
+        raise ReleaseError("unsupported binary target")
+    if target_os == "windows":
+        _check_pe(path, size)
+    else:
+        _check_static_elf(path, arch, size)
+
+
+def _binary_record(path, target_os, arch):
     size, sha256 = _file_digest(path, MAX_BINARY_SIZE)
-    _check_static_elf(path, arch, size)
-    return {"os": "linux", "arch": arch, "name": "panel", "size": size, "sha256": sha256}
+    _check_binary(path, target_os, arch, size)
+    return {"os": target_os, "arch": arch, "name": "panel.exe" if target_os == "windows" else "panel",
+            "size": size, "sha256": sha256}
+
+
+def _archive_name(target_os, arch):
+    suffix = "zip" if target_os == "windows" else "tar.gz"
+    return f"panel-{target_os}-{arch}.{suffix}"
 
 
 def _panel_header(size):
@@ -211,45 +261,72 @@ def _copy_exact(source, destination, size, *, eof=False):
 
 class _LimitedWriter:
     def __init__(self, stream, limit):
-        self.stream, self.limit, self.size = stream, limit, 0
+        self.stream, self.limit = stream, limit
+
+    def tell(self):
+        return self.stream.tell()
+
+    def seek(self, offset, whence=0):
+        return self.stream.seek(offset, whence)
+
+    def flush(self):
+        self.stream.flush()
 
     def write(self, data):
-        if self.size + len(data) > self.limit:
+        if self.tell() + len(data) > self.limit:
             raise ReleaseError("compressed archive exceeds its size limit")
-        self.size += len(data)
         return self.stream.write(data)
 
 
+def _archive_zip(binary, record, archive):
+    # Fixed time, Unix regular-file type, no ZIP64/extra fields/comments. The
+    # seekable bounded writer lets zipfile patch sizes/CRC, avoiding descriptors.
+    member = zipfile.ZipInfo("panel.exe", date_time=(1980, 1, 1, 0, 0, 0))
+    member.create_system = 3
+    member.external_attr = (stat.S_IFREG | 0o755) << 16
+    member.compress_type = zipfile.ZIP_DEFLATED
+    member.file_size = record["size"]
+    with archive.open("xb") as raw:
+        with zipfile.ZipFile(_LimitedWriter(raw, MAX_ARCHIVE_SIZE), mode="w", allowZip64=False) as packed:
+            with packed.open(member, "w") as compressed, binary.open("rb") as source:
+                if _copy_exact(source, compressed, record["size"], eof=True) != record["sha256"]:
+                    raise ReleaseError("binary changed while being archived")
+
+
 def _archive_binary(binary, record, output):
-    name = f"panel-linux-{record['arch']}.tar.gz"
+    name = _archive_name(record["os"], record["arch"])
     archive = output / name
     size = record["size"]
     _real_path(binary, directory=False)
-    with archive.open("xb") as raw:
-        with gzip.GzipFile(filename="", mode="wb", fileobj=_LimitedWriter(raw, MAX_ARCHIVE_SIZE),
-                           compresslevel=9, mtime=0) as compressed:
-            compressed.write(_panel_header(size))
-            with binary.open("rb") as source:
-                if _copy_exact(source, compressed, size, eof=True) != record["sha256"]:
-                    raise ReleaseError("binary changed while being archived")
-            padding = (-size) % tarfile.BLOCKSIZE
-            ending = padding + 2 * tarfile.BLOCKSIZE
-            ending += (-(tarfile.BLOCKSIZE + size + ending)) % tarfile.RECORDSIZE
-            compressed.write(b"\0" * ending)
+    if record["os"] == "windows":
+        _archive_zip(binary, record, archive)
+    else:
+        with archive.open("xb") as raw:
+            with gzip.GzipFile(filename="", mode="wb", fileobj=_LimitedWriter(raw, MAX_ARCHIVE_SIZE),
+                               compresslevel=9, mtime=0) as compressed:
+                compressed.write(_panel_header(size))
+                with binary.open("rb") as source:
+                    if _copy_exact(source, compressed, size, eof=True) != record["sha256"]:
+                        raise ReleaseError("binary changed while being archived")
+                padding = (-size) % tarfile.BLOCKSIZE
+                ending = padding + 2 * tarfile.BLOCKSIZE
+                ending += (-(tarfile.BLOCKSIZE + size + ending)) % tarfile.RECORDSIZE
+                compressed.write(b"\0" * ending)
     archive.chmod(0o644)
     archive_size, digest = _file_digest(archive, MAX_ARCHIVE_SIZE)
     return {"name": name, "size": archive_size, "sha256": digest}
 
 
-def _validate_binary_record(record, arch):
+def _validate_binary_record(record, target_os, arch):
     fields = {"os", "arch", "name", "size", "sha256", "archive"}
-    if (type(record) is not dict or set(record) != fields or arch not in ARCHITECTURES
-            or record["os"] != "linux" or record["arch"] != arch or record["name"] != "panel"):
-        raise ReleaseError("invalid format 2 binary identity or fields")
+    if (type(record) is not dict or set(record) != fields or (target_os, arch) not in TARGETS
+            or record["os"] != target_os or record["arch"] != arch
+            or record["name"] != ("panel.exe" if target_os == "windows" else "panel")):
+        raise ReleaseError("invalid format 3 binary identity or fields")
     archive = record["archive"]
     if (type(archive) is not dict or set(archive) != {"name", "size", "sha256"}
-            or archive["name"] != f"panel-linux-{arch}.tar.gz"):
-        raise ReleaseError("invalid format 2 archive identity or fields")
+            or archive["name"] != _archive_name(target_os, arch)):
+        raise ReleaseError("invalid format 3 archive identity or fields")
     for value, limit in ((record, MAX_BINARY_SIZE), (archive, MAX_ARCHIVE_SIZE)):
         if type(value["size"]) is not int or not 0 < value["size"] <= limit:
             raise ReleaseError("invalid binary or archive size")
@@ -297,47 +374,146 @@ def _gunzip_bounded(source, destination, expected):
     destination.seek(0)
 
 
-def extract_archive(archive, record, destination):
-    """Verify and extract only a fixed panel file; never execute archive contents.
+def _zip_layout(source, record):
+    """Parse fixed-size headers before expanding anything; no zipfile directory scan."""
+    raw = source.read(30)
+    if len(raw) != 30:
+        raise ReleaseError("truncated ZIP local header")
+    local = struct.unpack("<4s5H3I2H", raw)
+    signature, needed, flags, method, _, _, crc, compressed, size, name_len, extra_len = local
+    name = b"panel.exe"
+    if (signature != b"PK\x03\x04" or needed not in (10, 20) or flags & ~0x800
+            or method not in (0, 8) or name_len != len(name) or extra_len
+            or size != record["size"] or not 0 < compressed <= MAX_ARCHIVE_SIZE
+            or (method == 0 and compressed != size)):
+        raise ReleaseError("ZIP must be one unencrypted regular panel.exe without extensions")
+    if source.read(len(name)) != name:
+        raise ReleaseError("ZIP contains an unsafe or unexpected filename")
+    data_offset = 30 + len(name)
+    central_offset = data_offset + compressed
+    central_size = 46 + len(name)
+    if central_offset + central_size + 22 != record["archive"]["size"]:
+        raise ReleaseError("ZIP has extra members, trailing data, or inconsistent sizes")
+    source.seek(central_offset)
+    raw = source.read(46)
+    if len(raw) != 46:
+        raise ReleaseError("truncated ZIP central directory")
+    central = struct.unpack("<4s6H3I5H2I", raw)
+    creator, external = central[1] >> 8, central[15]
+    unix_mode = external >> 16
+    if (central[0] != b"PK\x01\x02" or central[2:10] != local[1:9]
+            or central[10] != len(name) or any(central[11:15]) or central[16] != 0
+            or creator not in (0, 3) or central[1] & 0xff not in (10, 20)
+            or external & 0xffff & ~0x27
+            or (creator == 3 and not stat.S_ISREG(unix_mode))
+            or (creator == 0 and unix_mode != 0)
+            or source.read(len(name)) != name):
+        raise ReleaseError("ZIP central directory is unsafe or differs from its local header")
+    raw = source.read(22)
+    if len(raw) != 22 or struct.unpack("<4s4H2IH", raw) != (
+            b"PK\x05\x06", 0, 0, 1, 1, central_size, central_offset, 0) or source.read(1):
+        raise ReleaseError("ZIP must be single-volume, non-ZIP64, without comments or extra data")
+    source.seek(data_offset)
+    return method, crc, compressed
 
-    Callers must supply an unused panel path in a private real directory. The
-    compressed hash is checked before decompression and again during the bounded
-    copy. Only our own exclusively-created file is removed on a failed check.
+
+def _unzip_bounded(archive, destination, record):
+    # Snapshot the bounded compressed bytes and check their hash again before
+    # parsing; no downloaded file is opened as executable code or extractall().
+    with tempfile.TemporaryFile(mode="w+b") as source:
+        with archive.open("rb") as raw:
+            digest = _copy_exact(raw, source, record["archive"]["size"], eof=True)
+        if digest != record["archive"]["sha256"]:
+            raise ReleaseError("archive changed while being copied")
+        source.seek(0)
+        method, expected_crc, remaining = _zip_layout(source, record)
+        decoder = zlib.decompressobj(-zlib.MAX_WBITS) if method == 8 else None
+        size, crc, digest = 0, 0, hashlib.sha256()
+
+        def write(data):
+            nonlocal size, crc
+            size += len(data)
+            if size > record["size"] or size > MAX_BINARY_SIZE:
+                raise ReleaseError("ZIP expansion exceeds its binary size limit")
+            destination.write(data)
+            digest.update(data)
+            crc = zlib.crc32(data, crc)
+
+        try:
+            while remaining:
+                chunk = source.read(min(COPY_BUFFER_SIZE, remaining))
+                if not chunk:
+                    raise ReleaseError("truncated ZIP payload")
+                remaining -= len(chunk)
+                if decoder is None:
+                    write(chunk)
+                    continue
+                if decoder.eof:
+                    raise ReleaseError("trailing ZIP compressed data")
+                pending = chunk
+                while True:
+                    allowance = min(COPY_BUFFER_SIZE, record["size"] - size + 1)
+                    data = decoder.decompress(pending, allowance)
+                    write(data)
+                    pending = decoder.unconsumed_tail
+                    if decoder.unused_data:
+                        raise ReleaseError("trailing ZIP compressed data")
+                    if decoder.eof or (not pending and len(data) < allowance):
+                        break
+        except zlib.error as error:
+            raise ReleaseError("invalid ZIP deflate stream") from error
+        if decoder is not None and not decoder.eof:
+            raise ReleaseError("truncated ZIP deflate stream")
+        if size != record["size"] or crc != expected_crc or digest.hexdigest() != record["sha256"]:
+            raise ReleaseError("inner PE size, CRC or SHA-256 mismatch")
+
+
+def extract_archive(archive, record, destination):
+    """Safely extract only panel/panel.exe; never execute archive contents.
+
+    Callers supply a new fixed-name path in a private real directory. Compressed
+    hash checks precede expansion, and only our exclusive file is removed on error.
     """
-    _validate_binary_record(record, record.get("arch") if isinstance(record, dict) else None)
+    _validate_binary_record(record, record.get("os") if isinstance(record, dict) else None,
+                            record.get("arch") if isinstance(record, dict) else None)
     archive = _absolute_path(archive)
     destination = _absolute_path(destination)
     _real_path(destination.parent, directory=True)
-    if destination.name != "panel" or os.path.lexists(destination):
-        raise ReleaseError("extraction requires a new fixed panel destination")
+    if destination.name != record["name"] or os.path.lexists(destination):
+        raise ReleaseError("extraction requires a new fixed binary destination")
     expected = record["archive"]
     if archive.name != expected["name"] or _file_digest(archive, MAX_ARCHIVE_SIZE) != (expected["size"], expected["sha256"]):
         raise ReleaseError("archive size or SHA-256 mismatch")
     created = False
     try:
-        # The temporary tar is outside the release/download directory. A bomb
-        # cannot grow it past MAX_TAR_SIZE, nor allocate a whole expanded tar.
-        with tempfile.TemporaryFile(mode="w+b") as unpacked:
-            with archive.open("rb") as source:
-                _gunzip_bounded(source, unpacked, expected)
-            if unpacked.read(tarfile.BLOCKSIZE) != _panel_header(record["size"]):
-                raise ReleaseError("archive must contain one normalized USTAR regular panel file")
+        if record["os"] == "windows":
             with destination.open("xb") as binary:
                 created = True
-                digest = _copy_exact(unpacked, binary, record["size"])
-            padding = (-record["size"]) % tarfile.BLOCKSIZE
-            zeros = unpacked.read(padding + 2 * tarfile.BLOCKSIZE)
-            if len(zeros) != padding + 2 * tarfile.BLOCKSIZE or any(zeros):
-                raise ReleaseError("truncated tar ending, extra member, or nonzero padding")
-            while True:
-                zeros = unpacked.read(COPY_BUFFER_SIZE)
-                if not zeros:
-                    break
-                if any(zeros):
-                    raise ReleaseError("extra tar member or trailing nonzero data")
-            if digest != record["sha256"]:
-                raise ReleaseError("inner ELF SHA-256 mismatch")
-        _check_static_elf(destination, record["arch"], record["size"])
+                _unzip_bounded(archive, binary, record)
+        else:
+            # A bomb cannot grow this separate temporary tar past MAX_TAR_SIZE
+            # nor allocate an entire expanded archive in memory.
+            with tempfile.TemporaryFile(mode="w+b") as unpacked:
+                with archive.open("rb") as source:
+                    _gunzip_bounded(source, unpacked, expected)
+                if unpacked.read(tarfile.BLOCKSIZE) != _panel_header(record["size"]):
+                    raise ReleaseError("archive must contain one normalized USTAR regular panel file")
+                with destination.open("xb") as binary:
+                    created = True
+                    digest = _copy_exact(unpacked, binary, record["size"])
+                padding = (-record["size"]) % tarfile.BLOCKSIZE
+                zeros = unpacked.read(padding + 2 * tarfile.BLOCKSIZE)
+                if len(zeros) != padding + 2 * tarfile.BLOCKSIZE or any(zeros):
+                    raise ReleaseError("truncated tar ending, extra member, or nonzero padding")
+                while True:
+                    zeros = unpacked.read(COPY_BUFFER_SIZE)
+                    if not zeros:
+                        break
+                    if any(zeros):
+                        raise ReleaseError("extra tar member or trailing nonzero data")
+                if digest != record["sha256"]:
+                    raise ReleaseError("inner ELF SHA-256 mismatch")
+        _check_binary(destination, record["os"], record["arch"], record["size"])
         destination.chmod(0o755)
         return destination
     except BaseException:
@@ -379,7 +555,7 @@ def verify_release(*, version, repository, commit, output, build_time=None):
     output = _absolute_path(output)
     _real_path(output, directory=True)
     if {path.name for path in output.iterdir()} != set(ASSET_NAMES):
-        raise ReleaseError("output must contain exactly the six contract assets")
+        raise ReleaseError("output must contain exactly the nine contract assets")
     checksums = _read_bounded(output / "SHA256SUMS", MAX_CHECKSUMS_SIZE)
     try:
         lines = checksums.decode("ascii").splitlines(keepends=True)
@@ -414,17 +590,17 @@ def verify_release(*, version, repository, commit, output, build_time=None):
         if type(manifest[field]) is not type(value) or manifest[field] != value:
             raise ReleaseError(f"release.json does not match expected {field}")
     binaries = manifest["binaries"]
-    if not isinstance(binaries, list) or len(binaries) != len(ARCHITECTURES):
-        raise ReleaseError("release.json must describe exactly amd64 and arm64 binaries")
-    for record, arch in zip(binaries, ARCHITECTURES):
-        _validate_binary_record(record, arch)
+    if not isinstance(binaries, list) or len(binaries) != len(TARGETS):
+        raise ReleaseError("release.json must describe Linux amd64/arm64 and Windows amd64 binaries")
+    for record, (target_os, arch) in zip(binaries, TARGETS):
+        _validate_binary_record(record, target_os, arch)
         with tempfile.TemporaryDirectory(prefix="panel-verify-") as temporary:
-            extract_archive(output / record["archive"]["name"], record, Path(temporary) / "panel")
+            extract_archive(output / record["archive"]["name"], record, Path(temporary) / record["name"])
     return manifest
 
 
 def build_release(*, version, repository, commit, output, build_time=None, go="go", project_root=PROJECT_ROOT):
-    """Build from trusted project source; copy only the two reviewed local scripts."""
+    """Build from trusted project source; copy only the four reviewed local scripts."""
     if build_time is None:
         build_time = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     manifest = _identity(version, repository, commit, build_time)
@@ -443,17 +619,18 @@ def build_release(*, version, repository, commit, output, build_time=None, go="g
         ))
         manifest["binaries"] = []
         with tempfile.TemporaryDirectory(prefix="panel-build-") as temporary:
-            for arch in ARCHITECTURES:
+            for target_os, arch in TARGETS:
                 env = os.environ.copy()
                 env.update({
-                    "CGO_ENABLED": "0", "GOOS": "linux", "GOARCH": arch,
+                    "CGO_ENABLED": "0", "GOOS": target_os, "GOARCH": arch,
                     "GOFLAGS": "", "GOENV": "off", "GOWORK": "off", "GOTOOLCHAIN": "local",
                     "GOAMD64": "v1", "GOARM64": "v8.0", "GOEXPERIMENT": "",
                 })
-                binary = Path(temporary) / f"panel-linux-{arch}"
-                command = [str(go), "build", "-trimpath", "-buildvcs=false", "-ldflags", ldflags, "-o", str(binary), "."]
+                suffix = ".exe" if target_os == "windows" else ""
+                binary = Path(temporary) / f"panel-{target_os}-{arch}{suffix}"
+                command = [str(go), "build", "-mod=readonly", "-trimpath", "-buildvcs=false", "-ldflags", ldflags, "-o", str(binary), "."]
                 subprocess.run(command, cwd=project_root, env=env, check=True, shell=False, timeout=BUILD_TIMEOUT_SECONDS)
-                record = _binary_record(binary, arch)
+                record = _binary_record(binary, target_os, arch)
                 record["archive"] = _archive_binary(binary, record, output)
                 manifest["binaries"].append(record)
         for name, data in scripts.items():

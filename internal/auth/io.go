@@ -11,11 +11,12 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"panel/internal/platform"
 )
 
 const maxStateBytes = 64 << 10
@@ -257,15 +258,8 @@ func walkJSON(decoder *json.Decoder, depth int) error {
 }
 
 func privateDirectory(dir string) error {
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return errors.New("auth: cannot create private data directory")
-	}
-	info, err := os.Lstat(dir)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("auth: data directory must be a real directory")
-	}
-	if err := os.Chmod(dir, 0700); err != nil {
-		return errors.New("auth: cannot restrict data directory permissions")
+	if err := platform.PreparePrivateDirectory(dir); err != nil {
+		return fmt.Errorf("auth: unsafe private data directory: %w", err)
 	}
 	return nil
 }
@@ -278,10 +272,8 @@ func readPrivateFile(path string, limit int64) ([]byte, error) {
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() > limit {
 		return nil, errors.New("auth: unsafe or oversized state file")
 	}
-	// Windows chmod does not implement POSIX ownership bits. Deployment there
-	// must restrict the data directory's NTFS ACL to the panel's service account.
-	if runtime.GOOS != "windows" && info.Mode().Perm()&0077 != 0 {
-		return nil, errors.New("auth: state file permissions must be owner-only")
+	if err := platform.CheckPrivateFile(path); err != nil {
+		return nil, fmt.Errorf("auth: unsafe state file permissions: %w", err)
 	}
 	file, err := os.Open(path)
 	if err != nil {
@@ -323,10 +315,16 @@ func atomicJSON(path string, value any, limit int) error {
 		if !existing.Mode().IsRegular() || existing.Mode()&os.ModeSymlink != 0 {
 			return errors.New("auth: unsafe state target")
 		}
+		if err := platform.CheckPrivateFile(path); err != nil {
+			return fmt.Errorf("auth: unsafe state target permissions: %w", err)
+		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return errors.New("auth: cannot inspect state target")
 	}
 	dir := filepath.Dir(path)
+	if err := privateDirectory(dir); err != nil {
+		return err
+	}
 	file, err := os.CreateTemp(dir, ".auth-write-*")
 	if err != nil {
 		return errors.New("auth: cannot create private temporary state")
@@ -336,6 +334,10 @@ func atomicJSON(path string, value any, limit int) error {
 	if err := file.Chmod(0600); err != nil {
 		_ = file.Close()
 		return errors.New("auth: cannot restrict state permissions")
+	}
+	if err := platform.CheckPrivateFile(temporary); err != nil {
+		_ = file.Close()
+		return errors.New("auth: temporary state did not inherit private permissions")
 	}
 	if _, err := file.Write(data); err != nil {
 		_ = file.Close()
@@ -371,6 +373,9 @@ func loadOrCreateBootstrap(path string) (string, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", errors.New("auth: cannot read private setup token file")
 	}
+	if err := privateDirectory(filepath.Dir(path)); err != nil {
+		return "", err
+	}
 	value, err := randomToken(32)
 	if err != nil {
 		return "", errors.New("auth: cannot generate setup credential")
@@ -391,6 +396,9 @@ func loadOrCreateBootstrap(path string) (string, error) {
 	}()
 	if err := file.Chmod(0600); err != nil {
 		return "", errors.New("auth: cannot restrict setup token permissions")
+	}
+	if err := platform.CheckPrivateFile(path); err != nil {
+		return "", errors.New("auth: setup token did not inherit private permissions")
 	}
 	if _, err := fmt.Fprintln(file, value); err != nil {
 		return "", errors.New("auth: cannot write setup token file")

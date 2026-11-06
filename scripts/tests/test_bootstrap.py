@@ -25,7 +25,7 @@ def definition(name):
 
 
 PURE = "\n".join(definition(name) for name in (
-    "bootstrap_fail", "bootstrap_help", "bootstrap_repo", "bootstrap_version", "bootstrap_origin",
+    "bootstrap_fail", "bootstrap_help", "bootstrap_repo", "bootstrap_version", "bootstrap_origin", "bootstrap_port", "bootstrap_menu",
     "bootstrap_arguments", "bootstrap_os_release", "bootstrap_missing", "bootstrap_confirm", "bootstrap"))
 FAKES = r'''
 PYTHON_READY=1
@@ -38,6 +38,17 @@ APT_NO_EFFECT=0
 REPLY_VALUE=yes
 REPLY_FAIL=0
 APT_CALLS=0
+DNF_CALLS=0
+PANEL_PACKAGE_MANAGER=apt
+PANEL_ACCOUNT_PACKAGE=passwd
+PANEL_NOLOGIN_PACKAGE=login
+MENU_ANSWERS=()
+MENU_INDEX=0
+bootstrap_prompt() {
+    (( MENU_INDEX < ${#MENU_ANSWERS[@]} )) || bootstrap_fail 'No controlling terminal for menu.'
+    REPLY=${MENU_ANSWERS[MENU_INDEX]}
+    MENU_INDEX=$((MENU_INDEX + 1))
+}
 bootstrap_root() { printf '%s\n' root-check; }
 bootstrap_system() { printf '%s\n' system-check; }
 bootstrap_update_source() { printf '%s\n' source-check; }
@@ -60,11 +71,16 @@ bootstrap_apt() {
         case $package in
             python3) PYTHON_READY=1 ;;
             ca-certificates) CA_FILE=1; CA_VALID=1 ;;
-            passwd) ACCOUNT_TOOLS=1 ;;
-            util-linux) NOLOGIN=1 ;;
+            passwd|shadow-utils) ACCOUNT_TOOLS=1 ;;
+            login|util-linux-core) NOLOGIN=1 ;;
             *) bootstrap_fail 'Harness saw unapproved dependency.' ;;
         esac
     done
+}
+bootstrap_dnf() {
+    DNF_CALLS=$((DNF_CALLS + 1))
+    printf 'fake-dnf %s\n' "$*"
+    bootstrap_apt "$@" >/dev/null
 }
 '''
 
@@ -76,6 +92,7 @@ class BootstrapTests(unittest.TestCase):
         # deliberately absent, rather than relying on an environment backdoor.
         script = "set -euo pipefail\nexport LANG=C LC_ALL=C\n" + PURE + FAKES + extra + "\n" + body
         self.assertNotIn("/usr/bin/apt-get", script)
+        self.assertNotIn("/usr/bin/dnf", script)
         self.assertNotIn("/usr/bin/systemctl", script)
         self.assertNotIn("/usr/bin/python3", script)
         env = {key: os.environ[key] for key in ("SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP") if key in os.environ}
@@ -100,7 +117,7 @@ class BootstrapTests(unittest.TestCase):
                     self.assertNotIn(event, result.stdout)
 
     def test_missing_malformed_duplicate_or_override_flags_fail_before_preflight(self):
-        cases = ((), ("--yes",), ("--repo",), ("--repo", "https://github.com/a/b"), ("--repo", "a.b/repo"),
+        cases = ((), ("--repo",), ("--repo", "https://github.com/a/b"), ("--repo", "a.b/repo"),
                  ("--repo", "a/-bad"), ("--repo", "a/b", "--root", "/tmp/test"), ("--update", "--repo", "a/b"),
                  ("--update", "--origin", "https://example.com"), ("--update", "--update"),
                  ("--repo=a/b", "--repo=a/b"), ("--repo=a/b", "--version=v01.2.3"),
@@ -201,8 +218,8 @@ class BootstrapTests(unittest.TestCase):
     def test_only_missing_allowlisted_packages_are_selected(self):
         for setup, expected in (("PYTHON_READY=0", "python3"), ("CA_FILE=0", "ca-certificates"),
                                 ("CA_VALID=0", "ca-certificates"), ("ACCOUNT_TOOLS=0", "passwd"),
-                                ("NOLOGIN=0", "util-linux"),
-                                ("PYTHON_READY=0; CA_FILE=0; ACCOUNT_TOOLS=0; NOLOGIN=0", "python3 ca-certificates passwd util-linux")):
+                                ("NOLOGIN=0", "login"),
+                                ("PYTHON_READY=0; CA_FILE=0; ACCOUNT_TOOLS=0; NOLOGIN=0", "python3 ca-certificates passwd login")):
             with self.subTest(setup=setup):
                 result = self.run_bootstrap(setup)
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -250,17 +267,80 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(apt.count("DEBIAN_FRONTEND=noninteractive"), 2)
         self.assertEqual(apt.count("--kill-after=30s"), 2)
         for required in ("DPkg::Lock::Timeout=30", "Acquire::Retries=2", "Acquire::https::Timeout=15", "180s", "300s",
-                         'install --yes --no-install-recommends "$@"', "python3|ca-certificates|passwd|util-linux"):
+                         'install --yes --no-install-recommends "$@"', "python3|ca-certificates|passwd|login"):
             self.assertIn(required, apt)
         for forbidden in ("apt upgrade", "dist-upgrade", "full-upgrade", "sources.list", "curl", "eval ", "source "):
             self.assertNotIn(forbidden, apt)
+
+    def test_menu_install_port_proxy_reprompts_and_forwards_arguments(self):
+        setup = 'MENU_ANSWERS=(9 1 80 6217 9 2 http://bad https://panel.example.com)\n'
+        result = self.run_shell(setup + 'bootstrap\nprintf "arg=<%s>\\n" "${PANEL_ARGS[@]}"\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("arg=<--port>\narg=<6217>", result.stdout)
+        self.assertIn("arg=<--origin>\narg=<https://panel.example.com>", result.stdout)
+        self.assertNotIn("arg=<--yes>", result.stdout)
+        self.assert_no_apt(result)
+
+    def test_menu_exit_upgrade_status_and_default_local_mode(self):
+        for answers, expected in (("0", None), ("2", "--upgrade"), ("3", "--status"), ('1 "" ""', "5173")):
+            with self.subTest(answers=answers):
+                result = self.run_shell('MENU_ANSWERS=(' + answers + ')\nbootstrap\nprintf "arg=<%s>\\n" "${PANEL_ARGS[@]}"\n')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                if expected is None:
+                    self.assertNotIn("root-check", result.stdout)
+                else:
+                    self.assertIn("arg=<" + expected + ">", result.stdout)
+                if expected == "--status":
+                    self.assertNotIn("system-check", result.stdout)
+                self.assert_no_apt(result)
+
+    def test_status_never_bootstraps_packages_or_requires_systemd(self):
+        for ready in (0, 1):
+            result = self.run_bootstrap("PYTHON_READY=" + str(ready) + "; CA_FILE=0; ACCOUNT_TOOLS=0", ("--status",))
+            self.assertEqual(result.returncode, 0 if ready else 1)
+            for event in ("system-check", "source-check", "fake-apt", "fake-dnf", "tty-confirm"):
+                self.assertNotIn(event, result.stdout)
+        for args in (("--status", "--yes"), ("--status", "--version=v0.5.0"), ("--upgrade", "--port=6217"),
+                     ("--status", "--repo=a/b"), ("--upgrade", "--update"), ("--migrate-manager", "--upgrade"),
+                     ("--port=80",), ("--port=65536",), ("--port=06217",)):
+            with self.subTest(args=args):
+                result = self.run_bootstrap(args=args)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("root-check", result.stdout)
+
+    def test_dnf_mapping_missing_packages_confirmation_and_failure(self):
+        for identity in ("rocky:9", "rocky:9.5", "rocky:10", "almalinux:9", "almalinux:10.1"):
+            os_id, version = identity.split(":")
+            setup = "bootstrap_os_release <<'OS_DATA'\nID=" + os_id + "\nVERSION_ID=" + version + "\nOS_DATA\n"
+            setup += "PYTHON_READY=0; CA_FILE=0; ACCOUNT_TOOLS=0; NOLOGIN=0\n"
+            result = self.run_bootstrap(setup)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("fake-dnf python3 ca-certificates shadow-utils util-linux-core", result.stdout)
+            self.assert_no_apt(result)
+        result = self.run_bootstrap(setup + "APT_FAIL=1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("reached-python", result.stdout)
+        for bad in ("8", "11", "9.2evil", "10.1.2"):
+            result = self.run_shell("bootstrap_os_release <<'OS_DATA'\nID=rocky\nVERSION_ID=" + bad + "\nOS_DATA\n")
+            self.assertNotEqual(result.returncode, 0)
+
+    def test_dnf_is_fixed_allowlist_bounded_and_no_security_policy_changes(self):
+        dnf = definition("bootstrap_dnf")
+        for required in ("python3|ca-certificates|shadow-utils|util-linux-core", "/usr/bin/env -i", "/usr/bin/dnf",
+                         "--kill-after=30s 300s", "--setopt=timeout=15", "--setopt=retries=2", "--setopt=exit_on_lock=True",
+                         "--setopt=install_weak_deps=False", 'install --assumeyes "$@"'):
+            self.assertIn(required, dnf)
+        for forbidden in ("upgrade", "setenforce", "semanage", "permissive", "--nogpgcheck", "repo=", "eval "):
+            self.assertNotIn(forbidden, dnf)
 
     def test_dependency_probes_use_only_system_python_fixed_ca_and_used_tools(self):
         python = definition("bootstrap_python_ready")
         ca = definition("bootstrap_ca_ready")
         self.assertIn("/usr/bin/python3 -I -c", python)
         self.assertIn("sys.version_info >= (3, 8)", python)
-        self.assertIn("/etc/ssl/certs/ca-certificates.crt", ca)
+        self.assertIn('"$PANEL_CA_FILE"', ca)
+        self.assertIn("/etc/ssl/certs/ca-certificates.crt", definition("bootstrap_os_release"))
+        self.assertIn("/etc/pki/tls/certs/ca-bundle.crt", definition("bootstrap_os_release"))
         self.assertIn('cert_store_stats()["x509_ca"]', ca)
         self.assertIn("/usr/sbin/useradd", definition("bootstrap_account_tools_ready"))
         self.assertIn("/usr/sbin/groupadd", definition("bootstrap_account_tools_ready"))

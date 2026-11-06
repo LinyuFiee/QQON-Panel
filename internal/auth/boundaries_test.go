@@ -98,17 +98,17 @@ func TestAuditWorstCaseEscapingStillFitsAndRotate(t *testing.T) {
 
 func TestNewRejectsInvalidOptionsAndSymlinkTargets(t *testing.T) {
 	for _, options := range []Options{
-		{}, {DataDir: t.TempDir(), SessionTTL: -time.Second},
-		{DataDir: t.TempDir(), SessionTTL: time.Second},
-		{DataDir: t.TempDir(), SessionTTL: maxSessionTTL + time.Second},
+		{}, {DataDir: tPrivateDir(t), SessionTTL: -time.Second},
+		{DataDir: tPrivateDir(t), SessionTTL: time.Second},
+		{DataDir: tPrivateDir(t), SessionTTL: maxSessionTTL + time.Second},
 	} {
 		if s, err := New(options); err == nil {
 			_ = s.Close()
 			t.Fatal("invalid auth options were accepted")
 		}
 	}
-	dir := t.TempDir()
-	outside := filepath.Join(t.TempDir(), "outside")
+	dir := tPrivateDir(t)
+	outside := filepath.Join(tPrivateDir(t), "outside")
 	if err := os.WriteFile(outside, []byte("unchanged"), 0600); err != nil {
 		t.Fatal(err)
 	}

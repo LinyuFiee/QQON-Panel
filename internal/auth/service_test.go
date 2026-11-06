@@ -36,9 +36,20 @@ type testHarness struct {
 	now *time.Time
 }
 
+func tPrivateDir(t *testing.T) string {
+	t.Helper()
+	// TempDir inherits the user's Windows ACL, which need not be private.
+	// Only a newly created child receives the production private DACL.
+	dir := filepath.Join(t.TempDir(), "private")
+	if err := privateDirectory(dir); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func newHarness(t *testing.T, initialized bool) *testHarness {
 	t.Helper()
-	return harnessIn(t, t.TempDir(), initialized)
+	return harnessIn(t, tPrivateDir(t), initialized)
 }
 
 func harnessIn(t *testing.T, dir string, initialized bool) *testHarness {
@@ -630,7 +641,7 @@ func TestMalformedPersistenceFailsClosedAndPrivateAtomicWrites(t *testing.T) {
 		"invalid-secret":        func(a *accountRecord) { a.TOTPSecret = []byte("short"); a.LastTOTPStep = 1 },
 	} {
 		t.Run(name, func(t *testing.T) {
-			dir := t.TempDir()
+			dir := tPrivateDir(t)
 			copy := cloneAccount(&candidate)
 			mutate(&copy)
 			if err := os.WriteFile(filepath.Join(dir, "auth.json"), []byte(encode(t, copy)), 0600); err != nil {
@@ -643,7 +654,7 @@ func TestMalformedPersistenceFailsClosedAndPrivateAtomicWrites(t *testing.T) {
 		})
 	}
 	for _, body := range []string{`{`, `null`, `{}`, `{"version":1,"version":1}`, strings.Repeat("x", maxStateBytes+1)} {
-		dir := t.TempDir()
+		dir := tPrivateDir(t)
 		if err := os.WriteFile(filepath.Join(dir, "auth.json"), []byte(body), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -655,7 +666,7 @@ func TestMalformedPersistenceFailsClosedAndPrivateAtomicWrites(t *testing.T) {
 			t.Fatal("malformed persistence allowed re-initialization")
 		}
 	}
-	statePath := filepath.Join(t.TempDir(), "private.json")
+	statePath := filepath.Join(tPrivateDir(t), "private.json")
 	if err := atomicJSON(statePath, map[string]string{"version": "old"}, 1024); err != nil {
 		t.Fatal(err)
 	}
@@ -741,7 +752,7 @@ func TestAuditIsBoundedRotatedAndSafe(t *testing.T) {
 
 func TestInvalidAuditAndTokenStateAreRejected(t *testing.T) {
 	for _, name := range []string{"auth-audit.json", "setup-token"} {
-		dir := t.TempDir()
+		dir := tPrivateDir(t)
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("broken-state"), 0600); err != nil {
 			t.Fatal(err)
 		}

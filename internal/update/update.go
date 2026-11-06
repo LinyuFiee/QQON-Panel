@@ -96,7 +96,7 @@ func (s *Service) Close() error {
 }
 
 func (s *Service) base() Status {
-	status := Status{Configured: s.repo != "", Repository: s.repo, Current: s.current, State: "not_checked", Message: "尚未检查 GitHub Release；只在手动操作时联网。", Command: "sudo panel-update"}
+	status := Status{Configured: s.repo != "", Repository: s.repo, Current: s.current, State: "not_checked", Message: "尚未检查 GitHub Release；只在手动操作时联网。", Command: updateCommand(s.current.OS, "")}
 	if s.repo == "" {
 		status.State, status.Message = "unconfigured", "未配置 GitHub 仓库。发行构建会自动写入仓库，也可使用 -github-repo owner/repo 指定。"
 	}
@@ -224,19 +224,48 @@ func (s *Service) fetch(ctx context.Context) Status {
 		latest.AssetMessage = err.Error()
 		return status
 	}
+	var metadata manifest
+	_ = json.Unmarshal(manifestData, &metadata)
+	platformReady := false
+	for _, binary := range metadata.Binaries {
+		if binary.OS == s.current.OS && binary.Arch == s.current.Arch {
+			platformReady = true
+			break
+		}
+	}
+	if !platformReady {
+		status.State, status.Message = "incompatible", "此 Release 没有当前系统和架构对应的程序。"
+		latest.AssetMessage = "该版本仅支持其他平台；请等待匹配的平台发行。"
+		return status
+	}
 	latest.AssetsReady, latest.AssetMessage = true, "发行文件齐全；版本清单与 SHA-256 对应。升级脚本仍会重新校验程序文件。"
 	current, _ := ParseVersion(s.current.Version)
 	switch latestVersion.Compare(current) {
 	case 1:
 		status.State, status.UpdateAvailable = "available", true
-		status.Message = "发现新的稳定版本。请在 Linux 安装主机上运行升级命令，面板不会自行提权或停服。"
-		status.Command = "sudo panel-update --version " + release.Tag
+		status.Message = "发现新的稳定版本。请在对应安装主机上运行升级命令，面板不会自行提权或停服。"
+		status.Command = updateCommand(s.current.OS, release.Tag)
 	case -1:
 		status.State, status.Message = "ahead", "当前版本高于此仓库最新稳定版，不进行降级。"
 	default:
 		status.State, status.Message = "up_to_date", "当前已是此仓库最新稳定版本。"
 	}
 	return status
+}
+
+func updateCommand(platform, tag string) string {
+	if platform == "windows" {
+		command := `& "$env:ProgramFiles\QQON-Panel\update.ps1"`
+		if tag != "" {
+			command += " -Version " + tag
+		}
+		return command
+	}
+	command := "sudo panel-update"
+	if tag != "" {
+		command += " --version " + tag
+	}
+	return command
 }
 
 type githubRelease struct {

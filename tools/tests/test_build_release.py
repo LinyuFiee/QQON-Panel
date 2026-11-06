@@ -1,4 +1,4 @@
-"""Isolated release tests: fixture scripts and ELF files, never real installers."""
+"""Isolated release tests: inert scripts and ELF/PE-shaped files, never installers."""
 
 import gzip
 import hashlib
@@ -7,6 +7,7 @@ import io
 import json
 import os
 from pathlib import Path
+import stat
 import struct
 import subprocess
 import sys
@@ -14,6 +15,7 @@ import tarfile
 import tempfile
 import unittest
 from unittest import mock
+import zipfile
 
 
 TOOL = Path(__file__).resolve().parents[1] / "build_release.py"
@@ -21,14 +23,14 @@ SPEC = importlib.util.spec_from_file_location("panel_build_release", TOOL)
 release = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(release)
 
-TAG = "v0.4.0"
+TAG = "v0.5.0"
 REPOSITORY = "example-owner/example-repo"
 # Deliberate unit-test identity, not a real repository commit or release.
 COMMIT = "a" * 40
 BUILD_TIME = "2026-11-06T00:00:00Z"
 ASSETS = (
-    "panel-linux-amd64.tar.gz", "panel-linux-arm64.tar.gz", "install.sh", "update.sh",
-    "release.json", "SHA256SUMS",
+    "panel-linux-amd64.tar.gz", "panel-linux-arm64.tar.gz", "panel-windows-amd64.zip",
+    "install.sh", "update.sh", "install.ps1", "update.ps1", "release.json", "SHA256SUMS",
 )
 
 
@@ -46,6 +48,36 @@ def elf_fixture(arch, program_types=(1,)):
     return header + headers + b"fixture only; not executable\n"
 
 
+def pe_fixture(machine=0x8664, magic=0x20b, flags=0x22):
+    """PE-shaped inert bytes, not a runnable program or a real repository release."""
+    dos = bytearray(64)
+    dos[:2] = b"MZ"
+    struct.pack_into("<I", dos, 60, 64)
+    coff = b"PE\0\0" + struct.pack("<HHIIIHH", machine, 1, 0, 0, 0, 112, flags)
+    optional = struct.pack("<H", magic) + b"\0" * 110
+    section = bytearray(40)
+    section[:5] = b".text"
+    struct.pack_into("<II", section, 16, 4, 240)
+    return bytes(dos) + coff + optional + bytes(section) + b"TEST"
+
+
+def zip_fixture(data=None, name="panel.exe", mode=stat.S_IFREG | 0o755, method=zipfile.ZIP_DEFLATED,
+                extra=b"", comment=b"", archive_comment=b"", extra_member=False, force_zip64=False):
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w") as packed:
+        member = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+        member.create_system = 3
+        member.external_attr = mode << 16
+        member.compress_type = method
+        member.extra, member.comment = extra, comment
+        with packed.open(member, "w", force_zip64=force_zip64) as stream:
+            stream.write(pe_fixture() if data is None else data)
+        if extra_member:
+            packed.writestr("extra", b"not allowed")
+        packed.comment = archive_comment
+    return output.getvalue()
+
+
 class IdentityTests(unittest.TestCase):
     def test_stable_versions(self):
         for tag in ("v0.0.0", TAG, "v2147483647.2147483647.2147483647"):
@@ -54,7 +86,7 @@ class IdentityTests(unittest.TestCase):
 
     def test_reject_invalid_versions(self):
         invalid = (
-            "0.4.0", "V0.4.0", "v01.2.3", "v1.02.3", "v1.2.03",
+            "0.5.0", "V0.5.0", "v01.2.3", "v1.02.3", "v1.2.03",
             "v1.2", "v1.2.3.4", "v1.2.3-rc.1", "v1.2.3+build",
             "v2147483648.0.0", "v1.2.3\n", " v1.2.3", "v１.2.3",
             "v1.2.3 -X main.commit=bad", "v" + "9" * 5000 + ".0.0",
@@ -111,6 +143,8 @@ class PackageTests(unittest.TestCase):
         self.scripts = {
             "install.sh": b"#!/bin/bash\n# inert installer fixture\nexit 99\n",
             "update.sh": b"#!/bin/bash\n# inert updater fixture\nexit 98\n",
+            "install.ps1": b"# inert Windows installer fixture, test only\nexit 99\n",
+            "update.ps1": b"# inert Windows updater fixture, test only\nexit 98\n",
         }
         for name, data in self.scripts.items():
             (self.project / "scripts" / name).write_bytes(data)
@@ -123,8 +157,8 @@ class PackageTests(unittest.TestCase):
         self.assertGreater(kwargs["timeout"], 0)
         self.assertEqual(Path(kwargs["cwd"]), self.project)
         self.assertEqual(command[:2], ["go", "build"])
-        arch = kwargs["env"]["GOARCH"]
-        Path(command[command.index("-o") + 1]).write_bytes(elf_fixture(arch))
+        target_os, arch = kwargs["env"]["GOOS"], kwargs["env"]["GOARCH"]
+        Path(command[command.index("-o") + 1]).write_bytes(pe_fixture() if target_os == "windows" else elf_fixture(arch))
         return subprocess.CompletedProcess(command, 0)
 
     def build(self, **overrides):
@@ -168,26 +202,28 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(set(manifest), {
             "format", "version", "tag", "repository", "dataSchema", "commit", "buildTime", "binaries",
         })
-        self.assertEqual(manifest["format"], 2)
+        self.assertEqual(manifest["format"], 3)
         self.assertEqual(manifest["dataSchema"], 1)
-        self.assertEqual(manifest["version"], "0.4.0")
+        self.assertEqual(manifest["version"], "0.5.0")
         self.assertEqual(manifest["tag"], TAG)
         self.assertEqual(manifest["repository"], REPOSITORY)
         self.assertEqual(manifest["commit"], COMMIT)
         self.assertEqual(manifest["buildTime"], BUILD_TIME)
-        self.assertEqual(runner.call_count, 2)
-        for call, arch, binary in zip(runner.call_args_list, ("amd64", "arm64"), manifest["binaries"]):
+        self.assertEqual(runner.call_count, 3)
+        targets = (("linux", "amd64"), ("linux", "arm64"), ("windows", "amd64"))
+        for call, (target_os, arch), binary in zip(runner.call_args_list, targets, manifest["binaries"]):
             command = call.args[0]
             env = call.kwargs["env"]
             self.assertIn("-trimpath", command)
+            self.assertIn("-mod=readonly", command)
             self.assertIn("-buildvcs=false", command)
             self.assertEqual(command[-1], ".")
             self.assertEqual(command[command.index("-ldflags") + 1].split(), [
-                "-s", "-w", "-X", "main.version=0.4.0", "-X", f"main.commit={COMMIT}",
+                "-s", "-w", "-X", "main.version=0.5.0", "-X", f"main.commit={COMMIT}",
                 "-X", f"main.buildTime={BUILD_TIME}", "-X", f"main.githubRepository={REPOSITORY}",
             ])
             for key, value in {
-                "CGO_ENABLED": "0", "GOOS": "linux", "GOARCH": arch, "GOFLAGS": "",
+                "CGO_ENABLED": "0", "GOOS": target_os, "GOARCH": arch, "GOFLAGS": "",
                 "GOENV": "off", "GOWORK": "off", "GOTOOLCHAIN": "local",
                 "GOAMD64": "v1", "GOARM64": "v8.0", "GOEXPERIMENT": "",
             }.items():
@@ -195,14 +231,24 @@ class PackageTests(unittest.TestCase):
             compiled = Path(command[command.index("-o") + 1])
             self.assertNotEqual(compiled.parent, self.output)
             self.assertFalse(compiled.parent.exists(), "temporary Go output must be cleaned up")
-            name = f"panel-linux-{arch}.tar.gz"
-            data = elf_fixture(arch)
+            name = f"panel-linux-{arch}.tar.gz" if target_os == "linux" else "panel-windows-amd64.zip"
+            data = elf_fixture(arch) if target_os == "linux" else pe_fixture()
             archive = (self.output / name).read_bytes()
             self.assertEqual(binary, {
-                "os": "linux", "arch": arch, "name": "panel", "size": len(data),
-                "sha256": hashlib.sha256(data).hexdigest(),
+                "os": target_os, "arch": arch, "name": "panel" if target_os == "linux" else "panel.exe",
+                "size": len(data), "sha256": hashlib.sha256(data).hexdigest(),
                 "archive": {"name": name, "size": len(archive), "sha256": hashlib.sha256(archive).hexdigest()},
             })
+            if target_os == "windows":
+                with zipfile.ZipFile(io.BytesIO(archive)) as packed:
+                    self.assertEqual(packed.namelist(), ["panel.exe"])
+                    member = packed.infolist()[0]
+                    self.assertEqual(member.date_time, (1980, 1, 1, 0, 0, 0))
+                    self.assertEqual(member.create_system, 3)
+                    self.assertEqual(member.external_attr, (stat.S_IFREG | 0o755) << 16)
+                    self.assertEqual((member.extra, member.comment, packed.comment, member.flag_bits), (b"", b"", b"", 0))
+                    self.assertEqual(packed.read(member), data)
+                continue
             self.assertEqual(archive[:4], b"\x1f\x8b\x08\x00")
             self.assertEqual(archive[4:8], b"\0" * 4)
             with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as packed:
@@ -277,7 +323,8 @@ class PackageTests(unittest.TestCase):
             self.assertFalse(self.output.exists())
 
     def test_script_size_limits_fail_before_creating_output(self):
-        for name, limit in (("install.sh", 256 * 1024), ("update.sh", 16 * 1024)):
+        for name, limit in (("install.sh", 512 * 1024), ("update.sh", 32 * 1024),
+                            ("install.ps1", 512 * 1024), ("update.ps1", 32 * 1024)):
             self.assertEqual(release.SCRIPT_LIMITS[name], limit)
             script = self.project / "scripts" / name
             script.write_bytes(b"x" * (limit + 1))
@@ -393,10 +440,10 @@ class PackageTests(unittest.TestCase):
                     with self.assertRaises(release.ReleaseError):
                         self.verify()
 
-    def replace_archive(self, data):
+    def replace_archive(self, data, index=0):
         path = self.output / "release.json"
         manifest = json.loads(path.read_bytes())
-        record = manifest["binaries"][0]
+        record = manifest["binaries"][index]
         (self.output / record["archive"]["name"]).write_bytes(data)
         record["archive"].update(size=len(data), sha256=hashlib.sha256(data).hexdigest())
         path.write_text(json.dumps(manifest), encoding="utf-8")
@@ -482,7 +529,7 @@ class PackageTests(unittest.TestCase):
             {"archive": dict(original["archive"], extra=1)}, {"archive": None},
         )
         for mutation in mutations:
-            modified = dict(manifest, binaries=[dict(original, **mutation), manifest["binaries"][1]])
+            modified = dict(manifest, binaries=[dict(original, **mutation), *manifest["binaries"][1:]])
             (self.output / "release.json").write_text(json.dumps(modified), encoding="utf-8")
             self.refresh_checksums()
             with self.subTest(mutation=mutation):
@@ -536,6 +583,192 @@ class PackageTests(unittest.TestCase):
         out.mkdir()
         with self.assertRaises(release.ReleaseError):
             release._archive_binary(binary, record, out)
+
+    def test_windows_missing_scripts_fail_before_creating_output(self):
+        for name in ("install.ps1", "update.ps1"):
+            script = self.project / "scripts" / name
+            script.unlink()
+            with mock.patch.object(release.subprocess, "run") as runner:
+                with self.assertRaises(release.ReleaseError):
+                    self.build()
+                runner.assert_not_called()
+            self.assertFalse(self.output.exists())
+            script.write_bytes(self.scripts[name])
+
+    def test_windows_pe_validation_rejects_wrong_machine_dll_and_truncation(self):
+        bad_offset = bytearray(pe_fixture())
+        struct.pack_into("<I", bad_offset, 60, 0xffffffff)
+        bad_section = bytearray(pe_fixture())
+        struct.pack_into("<I", bad_section, 64 + 24 + 112 + 20, 0xffffffff)
+        cases = (b"not a PE", elf_fixture("amd64"), pe_fixture(machine=0x14c), pe_fixture(machine=0xaa64),
+                 pe_fixture(magic=0x10b), pe_fixture(flags=0x2022), pe_fixture(flags=0),
+                 pe_fixture()[:63], pe_fixture()[:84], pe_fixture()[:200], bytes(bad_offset), bytes(bad_section))
+        path = self.root / "inert.exe"
+        for index, data in enumerate(cases):
+            path.write_bytes(data)
+            with self.subTest(case=index):
+                with self.assertRaises(release.ReleaseError):
+                    release._check_pe(path, len(data))
+        path.write_bytes(pe_fixture())
+        release._check_pe(path, path.stat().st_size)
+
+    def test_windows_zip_accepts_store_deflate_utf8_and_safe_dos_creator(self):
+        self.make_package()
+        for method in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+            for utf8 in (False, True):
+                raw = bytearray(zip_fixture(method=method))
+                central = raw.index(b"PK\x01\x02")
+                if utf8:
+                    struct.pack_into("<H", raw, 6, 0x800)
+                    struct.pack_into("<H", raw, central + 8, 0x800)
+                self.replace_archive(bytes(raw), index=2)
+                with self.subTest(method=method, utf8=utf8):
+                    self.verify()
+        raw = bytearray(zip_fixture())
+        central = raw.index(b"PK\x01\x02")
+        struct.pack_into("<H", raw, central + 4, 20)
+        struct.pack_into("<I", raw, central + 38, 0x20)
+        self.replace_archive(bytes(raw), index=2)
+        self.verify()
+
+    def test_windows_zip_rejects_paths_links_types_extra_comments_and_zip64(self):
+        self.make_package()
+        mutations = [
+            {"name": "../panel.exe"}, {"name": "/panel.exe"}, {"name": "./panel.exe"},
+            {"name": "C:\\panel.exe"}, {"name": "dir/panel.exe"}, {"name": "panel.exe:stream"},
+            {"name": "panel.exe/"}, {"name": "PANEL.EXE"}, {"name": "panel"},
+            {"mode": stat.S_IFLNK | 0o755}, {"mode": stat.S_IFDIR | 0o755},
+            {"mode": stat.S_IFIFO | 0o755}, {"mode": stat.S_IFCHR | 0o755}, {"mode": 0o755},
+            {"extra": b"\xfe\xca\0\0"}, {"comment": b"not allowed"},
+            {"archive_comment": b"not allowed"}, {"extra_member": True}, {"force_zip64": True},
+            {"method": zipfile.ZIP_BZIP2},
+        ]
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                self.replace_archive(zip_fixture(**mutation), index=2)
+                with self.assertRaises(release.ReleaseError):
+                    self.verify()
+
+    def test_windows_zip_rejects_header_disagreement_encryption_and_multivolume(self):
+        self.make_package()
+        original = zip_fixture()
+        central = original.index(b"PK\x01\x02")
+        end = len(original) - 22
+        cases = [(6, "H", 1), (central + 8, "H", 1), (6, "H", 8),
+                 (central + 8, "H", 8), (8, "H", 99), (central + 10, "H", 99),
+                 (4, "H", 45), (central + 6, "H", 45),
+                 (central + 42, "I", 1), (central + 38, "I", 0x10),
+                 (central + 38, "I", (stat.S_IFREG | 0o755) << 16 | 0x400),
+                 (central + 34, "H", 1), (end + 4, "H", 1), (end + 6, "H", 1),
+                 (end + 8, "H", 2), (end + 10, "H", 2),
+                 (end + 12, "I", 0xffffffff), (end + 16, "I", 0xffffffff)]
+        for offset, fmt, value in cases:
+            raw = bytearray(original)
+            struct.pack_into("<" + fmt, raw, offset, value)
+            with self.subTest(offset=offset, value=value):
+                self.replace_archive(bytes(raw), index=2)
+                with self.assertRaises(release.ReleaseError):
+                    self.verify()
+        for raw in (b"prefix" + original, original + b"\0", original + original, original[:-1], original[:20]):
+            self.replace_archive(raw, index=2)
+            with self.assertRaises(release.ReleaseError):
+                self.verify()
+
+    def test_windows_zip_crc_hash_arch_truncation_and_bomb(self):
+        self.make_package()
+        original = zip_fixture()
+        central = original.index(b"PK\x01\x02")
+        corrupted = bytearray(original)
+        crc = struct.unpack_from("<I", corrupted, 14)[0] ^ 1
+        struct.pack_into("<I", corrupted, 14, crc)
+        struct.pack_into("<I", corrupted, central + 16, crc)
+        self.replace_archive(bytes(corrupted), index=2)
+        with self.assertRaisesRegex(release.ReleaseError, "CRC"):
+            self.verify()
+        self.replace_archive(zip_fixture(data=pe_fixture(machine=0xaa64)), index=2)
+        metadata = json.loads((self.output / "release.json").read_bytes())
+        metadata["binaries"][2]["sha256"] = hashlib.sha256(pe_fixture(machine=0xaa64)).hexdigest()
+        (self.output / "release.json").write_text(json.dumps(metadata), encoding="utf-8")
+        self.refresh_checksums()
+        with self.assertRaisesRegex(release.ReleaseError, "Windows amd64"):
+            self.verify()
+        self.replace_archive(original, index=2)
+        with self.assertRaisesRegex(release.ReleaseError, "SHA-256"):
+            self.verify()
+        # Keep local/central metadata mutually consistent while a deflate stream
+        # produces more bytes: decoder must reject at the declared bound, not CRC.
+        bomb = bytearray(zip_fixture(data=b"\0" * (256 * 1024)))
+        central = bomb.index(b"PK\x01\x02")
+        struct.pack_into("<I", bomb, 22, len(pe_fixture()))
+        struct.pack_into("<I", bomb, central + 24, len(pe_fixture()))
+        self.replace_archive(bytes(bomb), index=2)
+        with self.assertRaisesRegex(release.ReleaseError, "expansion exceeds"):
+            self.verify()
+        # Remove a byte from compressed data but repair container sizes/offsets.
+        central = original.index(b"PK\x01\x02")
+        truncated = bytearray(original[:central - 1] + original[central:])
+        compressed = struct.unpack_from("<I", original, 18)[0] - 1
+        struct.pack_into("<I", truncated, 18, compressed)
+        struct.pack_into("<I", truncated, central - 1 + 20, compressed)
+        struct.pack_into("<I", truncated, len(truncated) - 6, central - 1)
+        self.replace_archive(bytes(truncated), index=2)
+        with self.assertRaises(release.ReleaseError):
+            self.verify()
+
+    def test_windows_zip_extraction_is_exclusive_bounded_and_never_executes(self):
+        manifest = self.make_package()
+        record = manifest["binaries"][2]
+        archive = self.output / record["archive"]["name"]
+        destination = self.root / "panel.exe"
+        with mock.patch.object(release.subprocess, "run") as runner:
+            release.extract_archive(archive, record, destination)
+            self.assertEqual(destination.read_bytes(), pe_fixture())
+            runner.assert_not_called()
+        with self.assertRaises(release.ReleaseError):
+            release.extract_archive(archive, record, destination)
+        self.assertEqual(destination.read_bytes(), pe_fixture())
+        destination.unlink()
+        with self.assertRaises(release.ReleaseError):
+            release.extract_archive(archive, dict(record, sha256="b" * 64), destination)
+        self.assertFalse(destination.exists())
+        with self.assertRaises(release.ReleaseError):
+            release.extract_archive(archive, record, self.root / "panel")
+        archive.write_bytes(archive.read_bytes() + b"tamper")
+        with mock.patch.object(release, "_unzip_bounded") as decoder:
+            with self.assertRaises(release.ReleaseError):
+                release.extract_archive(archive, record, destination)
+            decoder.assert_not_called()
+        self.assertFalse(destination.exists())
+        # Building either compressed format must stop before crossing its bound.
+        for target_os, arch, data in (("linux", "amd64", elf_fixture("amd64")), ("windows", "amd64", pe_fixture())):
+            binary = self.root / ("source-" + target_os)
+            binary.write_bytes(data)
+            record = release._binary_record(binary, target_os, arch)
+            output = self.root / ("limited-" + target_os)
+            output.mkdir()
+            with mock.patch.object(release, "MAX_ARCHIVE_SIZE", 50):
+                with self.assertRaises(release.ReleaseError):
+                    release._archive_binary(binary, record, output)
+            self.assertLessEqual(next(output.iterdir()).stat().st_size, 50)
+
+    def test_format2_and_missing_or_duplicate_targets_are_not_publishable(self):
+        manifest = self.make_package()
+        mutations = ({"format": 2}, {"binaries": manifest["binaries"][:2]},
+                     {"binaries": [manifest["binaries"][0]] * 3},
+                     {"binaries": list(reversed(manifest["binaries"]))})
+        for mutation in mutations:
+            (self.output / "release.json").write_text(json.dumps(dict(manifest, **mutation)), encoding="utf-8")
+            self.refresh_checksums()
+            with self.assertRaises(release.ReleaseError):
+                self.verify()
+
+    def test_cli_verify_format3_does_not_require_go_or_execute_binaries(self):
+        self.make_package()
+        result = subprocess.run([
+            sys.executable, "-I", str(TOOL), "--verify-only", "--version", TAG, "--repo", REPOSITORY,
+            "--commit", COMMIT, "--build-time", BUILD_TIME, "--output", str(self.output), "--go", "missing-go",
+        ], cwd=self.root, capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_symlink_output_parent_or_script_is_rejected(self):
         target = self.root / "real-parent"

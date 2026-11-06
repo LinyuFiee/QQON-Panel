@@ -17,6 +17,7 @@ import tarfile
 import tempfile
 import types
 import unittest
+import zipfile
 from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parents[1]
@@ -68,8 +69,8 @@ def refresh_release(data, metadata, repo=REPO):
 def release(version="0.3.0", repo=REPO):
     # Synthetic identities/binaries only: this is not a real public release.
     tag = "v" + version
-    data = {"install.sh": SOURCE, "update.sh": panel.WRAPPER}
-    metadata = {"format": 2, "version": version, "tag": tag, "repository": repo, "dataSchema": 1,
+    data = {"install.sh": SOURCE, "update.sh": panel.WRAPPER, "install.ps1": b"# synthetic installer\n", "update.ps1": b"# synthetic updater\n"}
+    metadata = {"format": 3, "version": version, "tag": tag, "repository": repo, "dataSchema": 1,
                 "commit": "a" * 40, "buildTime": "2026-11-06T00:00:00Z", "binaries": []}
     for arch in ("amd64", "arm64"):
         name = "panel-linux-" + arch + ".tar.gz"
@@ -78,6 +79,15 @@ def release(version="0.3.0", repo=REPO):
         metadata["binaries"].append({"os": "linux", "arch": arch, "name": "panel", "size": len(raw),
                                      "sha256": hashlib.sha256(raw).hexdigest(),
                                      "archive": {"name": name, "size": len(data[name]), "sha256": hashlib.sha256(data[name]).hexdigest()}})
+    windows = b"MZ synthetic Windows fixture, never executed"
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as packed:
+        packed.writestr("panel.exe", windows)
+    data["panel-windows-amd64.zip"] = output.getvalue()
+    metadata["binaries"].append({"os": "windows", "arch": "amd64", "name": "panel.exe", "size": len(windows),
+                                 "sha256": hashlib.sha256(windows).hexdigest(),
+                                 "archive": {"name": "panel-windows-amd64.zip", "size": len(output.getvalue()),
+                                             "sha256": hashlib.sha256(output.getvalue()).hexdigest()}})
     return refresh_release(data, metadata, repo)
 
 
@@ -231,7 +241,7 @@ class InstallationTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
         self.paths = types.SimpleNamespace(**{name: self.root.joinpath(*getattr(panel.Paths, name).parts[1:])
-                                              for name in ("binary", "previous", "code_dir", "installer", "updater", "config_dir", "config", "transaction", "unit", "data", "lock_dir", "lock")})
+                                              for name in ("binary", "previous", "code_dir", "installer", "manager_previous", "updater", "config_dir", "config", "transaction", "migration", "unit", "data", "lock_dir", "lock")})
         for path in (self.paths.binary.parent, self.paths.code_dir.parent, self.paths.unit.parent, self.paths.config_dir.parent,
                      self.paths.data.parent, self.paths.lock_dir.parent):
             path.mkdir(parents=True, exist_ok=True)
@@ -350,7 +360,7 @@ class InstallationTests(unittest.TestCase):
     def test_corrupt_manifest_never_stops(self):
         self.install()
         self.downloads.use("0.3.1")
-        self.downloads.assets["release.json"] = self.downloads.assets["release.json"].replace(b'"format":2', b'"format":1')
+        self.downloads.assets["release.json"] = self.downloads.assets["release.json"].replace(b'"format":3', b'"format":1')
         with self.assertRaisesRegex(panel.Failure, "Manifest SHA-256"):
             self.execute(update=True)
         self.assert_no_stop()
@@ -718,6 +728,197 @@ class InstallationTests(unittest.TestCase):
         self.events.clear()
         self.assert_recovered(marker)
 
+    def run_options(self, args):
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.manager.execute(panel.arguments(args), SOURCE, "amd64")
+        return output.getvalue()
+
+    def test_custom_loopback_port_is_recorded_and_preserved_by_upgrade(self):
+        self.run_options(["--repo", REPO, "--port", "6217", "--yes"])
+        config = panel.installation_config(self.paths.config.read_bytes())
+        self.assertEqual(config["listen"], "127.0.0.1:6217")
+        self.assertEqual(config["healthHost"], config["listen"])
+        self.assertIn(b"-listen 127.0.0.1:6217 ", self.paths.unit.read_bytes())
+        self.downloads.use("0.3.1")
+        self.run_options(["--upgrade", "--yes"])
+        updated = panel.installation_config(self.paths.config.read_bytes())
+        self.assertEqual(updated["listen"], config["listen"])
+        self.assertEqual(updated["healthHost"], config["healthHost"])
+        self.assertEqual(updated["version"], "0.3.1")
+
+    def test_format3_selects_linux_even_when_windows_amd64_appears_first(self):
+        metadata = json.loads(self.downloads.assets["release.json"])
+        metadata["binaries"].insert(0, metadata["binaries"].pop())
+        self.downloads.assets, self.downloads.api = refresh_release(self.downloads.assets, metadata)
+        self.execute()
+        self.assertEqual(self.paths.binary.read_bytes(), binary())
+        self.assertFalse(any(kind == "download" and url.endswith(".zip") for kind, url in self.events))
+
+    def test_status_without_install_or_with_pending_transactions_is_read_only(self):
+        output = self.run_options(["--status"])
+        self.assertIn("No recognized installation", output)
+        self.assertEqual(self.events, [])
+        self.install()
+        self.paths.transaction.write_bytes(b"pending, deliberately not parsed by status")
+        self.paths.migration.write_bytes(b"pending, deliberately not parsed by status")
+        before = {path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
+        output = json.loads(self.run_options(["--status"]))
+        self.assertTrue(output["pendingBinaryRecovery"])
+        self.assertTrue(output["pendingManagerRecovery"])
+        self.assertTrue(output["readOnly"])
+        self.assertEqual(output["service"], "not probed")
+        self.assertEqual(self.events, [])
+        self.assertEqual(before, {path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()})
+
+    def legacy_fixture(self):
+        self.install()
+        # Substitute only the pinned old hash in this import-only test module;
+        # production has no path/env/CLI override for its published SHA-256.
+        legacy = b"#!/bin/bash\n# synthetic pinned legacy manager, never executed\n"
+        patch = mock.patch.object(panel, "LEGACY_INSTALLER_SHA256", hashlib.sha256(legacy).hexdigest())
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.files.atomic_bytes(self.paths.installer, legacy, 0o755)
+        old = panel.installation_config(self.paths.config.read_bytes())
+        old["installerSHA256"] = panel.LEGACY_INSTALLER_SHA256
+        self.files.atomic_bytes(self.paths.config, panel.config_bytes(old), 0o644)
+        self.events.clear()
+        return old, legacy
+
+    def confirm_migration(self, message, unattended):
+        self.assertFalse(unattended, "--yes must never skip manager migration confirmation")
+        self.events.append(("migration-confirm", message))
+
+    def test_manager_migration_changes_only_installer_digest_without_service_restart(self):
+        old, legacy = self.legacy_fixture()
+        untouched = {path: path.read_bytes() for path in (self.paths.binary, self.paths.unit, self.paths.updater)}
+        self.runtime.confirm = self.confirm_migration
+        self.run_options(["--upgrade", "--yes"])
+        config = panel.installation_config(self.paths.config.read_bytes())
+        self.assertEqual(config, dict(old, installerSHA256=hashlib.sha256(SOURCE).hexdigest()))
+        self.assertEqual(self.paths.installer.read_bytes(), SOURCE)
+        self.assertEqual(self.paths.manager_previous.read_bytes(), legacy)
+        self.assertFalse(self.paths.migration.exists())
+        self.assertFalse(any(kind in ("systemctl", "download", "account") for kind, _ in self.events))
+        marker_writes = [i for i, event in enumerate(self.events) if event == ("replace", "manager-migration.json")]
+        self.assertEqual(len(marker_writes), 2)
+        self.assertLess(marker_writes[0], self.events.index(("replace", "install.sh.v0.4.0.previous")))
+        self.assertLess(self.events.index(("replace", "install.sh.v0.4.0.previous")), marker_writes[1])
+        self.assertLess(marker_writes[1], self.events.index(("replace", "install.sh")))
+        self.assertEqual(untouched, {path: path.read_bytes() for path in untouched})
+        self.assert_data()
+
+    def test_manager_migration_cancel_no_tty_or_unknown_manager_never_writes(self):
+        old, legacy = self.legacy_fixture()
+        self.runtime.confirm = mock.Mock(side_effect=panel.Failure("No controlling terminal; migration cancelled"))
+        with self.assertRaisesRegex(panel.Failure, "No controlling terminal"):
+            self.run_options(["--migrate-manager", "--yes"])
+        self.assertFalse(self.paths.migration.exists())
+        self.assertFalse(self.paths.manager_previous.exists())
+        self.assertEqual(self.paths.installer.read_bytes(), legacy)
+        self.assertFalse(any(kind in ("replace", "systemctl", "download") for kind, _ in self.events))
+        unknown = b"unknown-manager"
+        self.paths.installer.write_bytes(unknown)
+        old["installerSHA256"] = hashlib.sha256(unknown).hexdigest()
+        self.paths.config.write_bytes(panel.config_bytes(old))
+        self.events.clear()
+        with self.assertRaisesRegex(panel.Failure, "Unknown installed manager"):
+            self.run_options(["--upgrade", "--yes"])
+        self.assertFalse(any(kind in ("build-info", "replace", "systemctl", "download") for kind, _ in self.events))
+
+    def migration_crash_fixture(self, phase="ready", switched=True, metadata_new=False):
+        old, legacy = self.legacy_fixture()
+        new = dict(old, installerSHA256=hashlib.sha256(SOURCE).hexdigest())
+        if phase == "ready":
+            self.files.atomic_bytes(self.paths.manager_previous, legacy, 0o755)
+        if switched:
+            self.files.atomic_bytes(self.paths.installer, SOURCE, 0o755)
+        if metadata_new:
+            self.files.atomic_bytes(self.paths.config, panel.config_bytes(new), 0o644)
+        marker = {"format": 1, "phase": phase, "old": old, "new": new}
+        self.files.atomic_bytes(self.paths.migration, panel.config_bytes(marker), 0o600)
+        self.events.clear()
+        return marker, legacy
+
+    def test_manager_power_loss_ready_restores_old_script_and_record_without_execution(self):
+        for metadata_new in (False, True):
+            with self.subTest(metadata_new=metadata_new):
+                if metadata_new:
+                    # Reuse the same safe old installation with a second crash point.
+                    marker["phase"] = "ready"
+                    self.files.atomic_bytes(self.paths.installer, SOURCE, 0o755)
+                    self.files.atomic_bytes(self.paths.config, panel.config_bytes(marker["new"]), 0o644)
+                    self.files.atomic_bytes(self.paths.migration, panel.config_bytes(marker), 0o600)
+                    self.events.clear()
+                else:
+                    marker, legacy = self.migration_crash_fixture()
+                self.run_options(["--upgrade", "--yes"])
+                self.assertEqual(self.paths.installer.read_bytes(), legacy)
+                self.assertEqual(panel.installation_config(self.paths.config.read_bytes()), marker["old"])
+                self.assertFalse(self.paths.migration.exists())
+                self.assertFalse(any(kind in ("build-info", "systemctl", "download", "confirm") for kind, _ in self.events))
+                self.assert_data()
+
+    def test_manager_prepared_without_backup_recovers_old_but_cannot_authorize_switch(self):
+        marker, legacy = self.migration_crash_fixture(phase="prepared", switched=False)
+        self.run_options(["--upgrade", "--yes"])
+        self.assertEqual(self.paths.installer.read_bytes(), legacy)
+        self.assertFalse(self.paths.manager_previous.exists())
+        self.files.atomic_bytes(self.paths.installer, SOURCE, 0o755)
+        self.files.atomic_bytes(self.paths.migration, panel.config_bytes(marker), 0o600)
+        self.events.clear()
+        with self.assertRaisesRegex(panel.Failure, "backup phase"):
+            self.run_options(["--upgrade", "--yes"])
+        self.assertTrue(self.paths.migration.exists())
+        self.assertFalse(any(kind in ("replace", "systemctl", "download") for kind, _ in self.events))
+
+    def test_manager_recovery_rejects_tampered_backup_path_or_fixed_fields(self):
+        marker, legacy = self.migration_crash_fixture()
+        self.paths.manager_previous.write_bytes(b"corrupt backup")
+        with self.assertRaisesRegex(panel.Failure, "backup SHA-256"):
+            self.run_options(["--upgrade", "--yes"])
+        self.paths.manager_previous.write_bytes(legacy)
+        for change in ({"path": "/tmp/untrusted"}, {"format": True}, {"phase": "unknown"}):
+            with self.subTest(change=change):
+                self.paths.migration.write_bytes(panel.config_bytes(dict(marker, **change)))
+                with self.assertRaises(panel.Failure):
+                    self.run_options(["--upgrade", "--yes"])
+        bad = json.loads(panel.config_bytes(marker))
+        bad["new"]["version"] = "0.9.0"
+        self.paths.migration.write_bytes(panel.config_bytes(bad))
+        with self.assertRaisesRegex(panel.Failure, "only installerSHA256"):
+            self.run_options(["--upgrade", "--yes"])
+        self.assertFalse(any(kind in ("replace", "systemctl", "download", "build-info") for kind, _ in self.events))
+
+    def test_manager_metadata_write_failure_rolls_back_and_old_binary_transaction_precedes_migration(self):
+        old, legacy = self.legacy_fixture()
+        self.runtime.confirm = self.confirm_migration
+        original = self.files.atomic_bytes
+        once = [True]
+
+        def fail_metadata(path, raw, mode):
+            if path == self.paths.config and hashlib.sha256(SOURCE).hexdigest().encode() in raw and once[0]:
+                once[0] = False
+                raise OSError("injected manager metadata write failure")
+            return original(path, raw, mode)
+
+        self.files.atomic_bytes = fail_metadata
+        with self.assertRaisesRegex(panel.Failure, "rollback succeeded"):
+            self.run_options(["--upgrade", "--yes"])
+        self.assertEqual(self.paths.installer.read_bytes(), legacy)
+        self.assertEqual(panel.installation_config(self.paths.config.read_bytes()), old)
+        self.assertFalse(self.paths.migration.exists())
+        self.files.atomic_bytes = original
+        new = dict(old, version="0.3.1", binarySHA256=hashlib.sha256(binary("0.3.1")).hexdigest())
+        self.files.atomic_bytes(self.paths.transaction, panel.config_bytes({"format": 1, "phase": "prepared", "old": old, "new": new}), 0o600)
+        self.events.clear()
+        self.run_options(["--upgrade", "--yes"])
+        self.assertFalse(self.paths.transaction.exists())
+        self.assertEqual(self.paths.installer.read_bytes(), legacy)
+        self.assertFalse(any(kind in ("migration-confirm", "download") for kind, _ in self.events))
+        self.assertIn(("healthy", old["version"]), self.events)
+        self.assert_data()
+
     def test_update_requires_recognized_metadata(self):
         with self.assertRaisesRegex(panel.Failure, "No recognized installation"):
             self.execute(update=True)
@@ -982,7 +1183,7 @@ class ValidationTests(unittest.TestCase):
                 sums["release.json"] = hashlib.sha256(raw).hexdigest()
                 with self.assertRaises(panel.Failure):
                     panel.manifest(raw, sums, REPO, "v0.3.0")
-        raw = assets["release.json"].replace(b'"format":2', b'"format":2,"format":2')
+        raw = assets["release.json"].replace(b'"format":3', b'"format":3,"format":3')
         sums = panel.checksums(assets["SHA256SUMS"])
         sums["release.json"] = hashlib.sha256(raw).hexdigest()
         with self.assertRaisesRegex(panel.Failure, "Duplicate"):
@@ -1020,7 +1221,7 @@ class ValidationTests(unittest.TestCase):
         raw = encoded(value)
         sums = panel.checksums(assets["SHA256SUMS"])
         sums["release.json"] = hashlib.sha256(raw).hexdigest()
-        with self.assertRaisesRegex(panel.Failure, "format 2"):
+        with self.assertRaisesRegex(panel.Failure, "format 3"):
             panel.manifest(raw, sums, REPO, "v0.3.0")
 
     def test_checksums_never_cover_inner_panel_and_archives_have_distinct_identity(self):
@@ -1029,7 +1230,7 @@ class ValidationTests(unittest.TestCase):
         self.assertNotIn("panel", sums)
         metadata = panel.manifest(assets["release.json"], sums, REPO, "v0.3.0")
         for item in metadata["binaries"]:
-            self.assertEqual(item["name"], "panel")
+            self.assertEqual(item["name"], "panel.exe" if item["os"] == "windows" else "panel")
             self.assertEqual(item["archive"]["sha256"], sums[item["archive"]["name"]])
             self.assertNotEqual(item["sha256"], item["archive"]["sha256"])
         with self.assertRaises(panel.Failure):
@@ -1068,8 +1269,51 @@ class ValidationTests(unittest.TestCase):
             with self.subTest(changes=changes), self.assertRaises(panel.Failure):
                 panel.build_info(encoded(dict(info, **changes)), REPO, "amd64", metadata)
 
+    def test_new_cli_default_repository_port_status_and_mutation_conflicts(self):
+        self.assertEqual(panel.arguments(["--yes"]).repo, panel.DEFAULT_REPO)
+        self.assertEqual(panel.arguments(["--port", "6217"]).port, 6217)
+        self.assertTrue(panel.arguments(["--upgrade"]).upgrade)
+        self.assertTrue(panel.arguments(["--migrate-manager"]).migrate_manager)
+        self.assertTrue(panel.arguments(["--status"]).status)
+        for argv in (["--status", "--yes"], ["--status", "--version=v0.5.0"], ["--upgrade", "--port=6217"],
+                     ["--upgrade", "--repo=a/b"], ["--upgrade", "--update"], ["--migrate-manager", "--origin=https://example.com"],
+                     ["--port=80"], ["--port=65536"], ["--port=06217"], ["--port=6217", "--port=6218"]):
+            with self.subTest(argv=argv), self.assertRaises(panel.Failure):
+                panel.arguments(argv)
+
+    def test_main_status_returns_before_preflight_trusted_source_or_umask(self):
+        manager = mock.Mock()
+        with mock.patch.object(panel, "Manager", return_value=manager), \
+                mock.patch.object(panel.sys, "argv", ["-", "reviewed.sh", "--status"]), \
+                mock.patch.object(panel, "read_source", side_effect=AssertionError("status read source")), \
+                mock.patch.object(panel.os, "umask", side_effect=AssertionError("status changed umask")):
+            panel.main()
+        manager.status.assert_called_once_with()
+        manager.runtime.preflight.assert_not_called()
+        manager.execute.assert_not_called()
+
+    def test_upgrade_and_migration_use_trusted_local_source_validation(self):
+        for flag in ("--upgrade", "--migrate-manager"):
+            with self.subTest(flag=flag):
+                manager = mock.Mock()
+                manager.paths.installer = panel.Paths.installer
+                with mock.patch.object(panel, "Manager", return_value=manager), \
+                        mock.patch.object(panel.sys, "argv", ["-", "/reviewed/install.sh", flag]), \
+                        mock.patch.object(panel, "read_source", side_effect=panel.Failure("untrusted source")) as reader:
+                    with self.assertRaisesRegex(panel.Failure, "untrusted source"):
+                        panel.main()
+                reader.assert_called_once_with("/reviewed/install.sh", panel.Paths.installer, manager.files, False)
+                manager.execute.assert_not_called()
+
+    def test_legacy_template_and_wrapper_identity_remain_unchanged(self):
+        self.assertEqual(hashlib.sha256(panel.WRAPPER).hexdigest(), panel.LEGACY_WRAPPER_SHA256)
+        config = {"repository": REPO, "listen": panel.LISTEN, "origin": "", "healthHost": panel.LISTEN}
+        self.assertEqual(panel.unit_bytes(config), panel.legacy_unit_bytes(config))
+        self.assertEqual(SOURCE.splitlines()[1], b"# QQON-Panel interactive installer protocol: 3")
+        self.assertEqual(panel.LEGACY_INSTALLER_SHA256, "bc78f2ec682704bb5beb965806ec56e511827f6d3451949a03d5b40db535eb91")
+
     def test_unit_preserves_deployment_sandboxing(self):
-        unit = panel.unit_bytes({"repository": REPO, "origin": "", "healthHost": panel.LISTEN}).decode()
+        unit = panel.unit_bytes({"repository": REPO, "listen": panel.LISTEN, "origin": "", "healthHost": panel.LISTEN}).decode()
         for setting in ("User=server-panel", "Group=server-panel", "NoNewPrivileges=true", "ProtectSystem=strict", "ProtectHome=true",
                         "PrivateTmp=true", "ProtectKernelTunables=true", "ProtectKernelModules=true", "ProtectControlGroups=true",
                         "RestrictSUIDSGID=true", "LockPersonality=true", "RestrictRealtime=true", "RestrictNamespaces=true", "CapabilityBoundingSet=",
@@ -1155,7 +1399,7 @@ class NetworkTests(unittest.TestCase):
         with mock.patch.object(panel.http.client, "HTTPConnection", return_value=connection), \
                 mock.patch.object(panel, "deadline", return_value=contextlib.nullcontext()):
             with self.assertRaises(panel.Interrupted):
-                panel.Runtime().health_once({"healthHost": panel.LISTEN, "version": "0.3.0"}, 2)
+                panel.Runtime().health_once({"listen": panel.LISTEN, "healthHost": panel.LISTEN, "version": "0.3.0"}, 2)
         connection.close.assert_called_once()
 
     def test_health_is_loopback_only_and_sends_configured_host(self):
@@ -1163,11 +1407,11 @@ class NetworkTests(unittest.TestCase):
         response.read.return_value = encoded({"status": "ok", "version": "0.3.1", "dataSchema": 1})
         connection = mock.Mock()
         connection.getresponse.return_value = response
-        config = {"healthHost": "panel.example.com:8443", "version": "0.3.1"}
+        config = {"listen": "127.0.0.1:6273", "healthHost": "panel.example.com:8443", "version": "0.3.1"}
         with mock.patch.object(panel.http.client, "HTTPConnection", return_value=connection) as factory, \
                 mock.patch.object(panel, "deadline", return_value=contextlib.nullcontext()):
             self.assertTrue(panel.Runtime().health_once(config, 2))
-            factory.assert_called_once_with("127.0.0.1", 5173, timeout=2)
+            factory.assert_called_once_with("127.0.0.1", 6273, timeout=2)
             connection.request.assert_called_once_with("GET", "/healthz", headers={"Host": "panel.example.com:8443", "Connection": "close"})
             response.read.return_value = encoded({"status": "ok", "version": "0.3.0", "dataSchema": 1})
             self.assertFalse(panel.Runtime().health_once(config, 2))

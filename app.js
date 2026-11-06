@@ -650,11 +650,12 @@
         ${url ? `<a class="text-link" href="${h(url)}" target="_blank" rel="noopener noreferrer">查看 GitHub Release</a>` : notice("Release 链接未通过仓库与地址校验，不提供跳转。", "warning")}
         <pre class="code-preview release-notes">${h(text(latest.notes, "此 Release 未提供更新说明。"))}</pre>
       </section>` : `<section class="panel section-card"><h2>Release</h2>${empty("缓存中暂无 Release 信息。")}</section>`}
-      <section class="panel section-card"><h2>在 Linux 主机上更新</h2>
-        <p class="body-copy">网页仅提供更新通知，不执行安装、提权或服务重启。请由管理员在已通过安装脚本部署的 Linux 实例上，使用已审核的更新脚本执行以下命令；该命令不会在网页中运行。</p>
-        ${data.current.os === "windows" ? notice("当前面板运行于 Windows。以下命令仅适用于已安装的 Linux 实例，不适用于此 Windows 主机。", "warning") : ""}
-        ${data.command ? `<pre class="code-preview"><code>${h(data.command)}</code></pre>` : notice("后端未提供更新命令，请查阅已审核的 Linux 安装与更新脚本。", "warning")}
+      <section class="panel section-card"><h2>在${data.current.os === "windows" ? " Windows " : " Linux "}主机上更新</h2>
+        <p class="body-copy">网页仅提供更新通知，不执行安装、提权或服务重启。请在通过官方安装器部署的主机终端执行对应命令；开发预览不能代替正式服务安装。</p>
+        ${data.current.os === "windows" ? notice("请使用管理员 PowerShell。服务会停止、更新并重新启动，未保存的会话将失效。", "info") : ""}
+        ${data.command ? `<pre class="code-preview"><code>${h(data.command)}</code></pre>` : notice("后端未提供更新命令，请查看对应系统的安装与升级文档。", "warning")}
         <p class="panel-subtitle">执行前请确认仓库、目标版本与备份。普通更新不支持降级或不同数据结构版本。</p>
+        <a class="text-link" href="https://linyufiee.github.io/QQON-Panel/" target="_blank" rel="noopener noreferrer">安装与升级文档</a>
       </section>`;
   }
 

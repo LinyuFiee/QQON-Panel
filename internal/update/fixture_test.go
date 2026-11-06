@@ -31,6 +31,9 @@ func TestPublisherFixtureCompatibility(t *testing.T) {
 	}
 	release := githubRelease{Tag: m.Tag}
 	for name := range assetLimits {
+		if m.Format == 2 && !legacyAssets[name] {
+			continue
+		}
 		info, err := os.Stat(filepath.Join(directory, name))
 		if err != nil {
 			t.Fatal(err)

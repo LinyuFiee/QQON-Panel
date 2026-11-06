@@ -1,4 +1,5 @@
 #!/bin/bash
+# QQON-Panel interactive installer protocol: 3
 # Review this local file before running it as root. No remote script is executed.
 set -euo pipefail
 if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
@@ -17,14 +18,18 @@ bootstrap_fail() {
 
 bootstrap_help() {
     printf '%s\n' \
-        'Usage: sudo bash install.sh --repo OWNER/REPO [--version v0.4.0] [--origin https://panel.example.com] [--yes]' \
-        '       sudo panel-update [--version v0.4.0] [--yes]' \
+        'Usage: sudo bash install.sh                         # interactive /dev/tty menu' \
+        '       sudo bash install.sh [--repo OWNER/REPO] [--version v0.5.0] [--port 5173] [--origin https://panel.example.com] [--yes]' \
+        '       sudo bash install.sh --upgrade [--version v0.5.0] [--yes]' \
+        '       sudo bash install.sh --status                # read-only, no dependency installation' \
+        '       sudo panel-update [--version v0.5.0] [--yes]' \
         '' \
-        'Requires root and running systemd on Debian 12/13 or Ubuntu 22.04/24.04 (amd64/arm64).' \
-        'Downloads format 2 tar.gz releases; verifies archive and inner panel size/SHA-256.' \
-        'Only missing Python 3.8+, CA certificates and used account utilities are installed with APT.' \
-        'APT changes require --yes or confirmation through /dev/tty; no system upgrade or source changes.' \
-        'The panel runs as server-panel, never root. Updates preserve private data and recovery markers.' \
+        'Default repository: LinyuFiee/QQON-Panel. New installations/updates require format 3 releases.' \
+        'Root + active systemd + Linux amd64/arm64 are required before installing dependencies.' \
+        'Supported: Debian 12/13, Ubuntu 22.04/24.04 (APT), Rocky/AlmaLinux 9/10 (DNF).' \
+        'Only missing Python 3.8+, CA certificates and account tools are installed; no system upgrade or SELinux changes.' \
+        'Port is 1024-65535; binding is always 127.0.0.1. Public access requires an existing HTTPS proxy.' \
+        'Known v0.4.0 manager migration needs separate TTY confirmation, even with --yes; application data is preserved.' \
         '--help, -h  Show this help without changing the host.'
 }
 
@@ -60,39 +65,85 @@ bootstrap_origin() {
     fi
 }
 
+bootstrap_port() {
+    [[ $1 =~ ^[1-9][0-9]{3,4}$ ]] && (( 10#$1 >= 1024 && 10#$1 <= 65535 )) ||
+        bootstrap_fail 'Port must be an integer from 1024 to 65535.'
+}
+
+bootstrap_prompt() {
+    { printf '%s' "$1" > /dev/tty && IFS= read -r REPLY < /dev/tty; } 2>/dev/null ||
+        bootstrap_fail 'No controlling terminal; use explicit --yes/--upgrade/--status flags instead of the interactive menu.'
+}
+
+bootstrap_menu() {
+    local REPLY='' port mode
+    while :; do
+        bootstrap_prompt $'QQON-Panel (LinyuFiee/QQON-Panel)\n1 install\n2 upgrade\n3 status (read-only)\n0 exit\nSelect [0]: '
+        case $REPLY in
+            0|'') exit 0 ;;
+            3) PANEL_ARGS=(--status); return ;;
+            2) PANEL_ARGS=(--upgrade); return ;;
+            1) break ;;
+            *) printf '%s\n' 'Choose 1, 2, 3 or 0.' ;;
+        esac
+    done
+    while :; do
+        bootstrap_prompt 'Loopback port, 1024-65535 [5173]: '
+        port=${REPLY:-5173}
+        if (bootstrap_port "$port"); then break; fi
+    done
+    PANEL_ARGS=(--port "$port")
+    while :; do
+        bootstrap_prompt $'1 local access / SSH tunnel (default)\n2 existing HTTPS reverse proxy\nAccess mode [1]: '
+        mode=${REPLY:-1}
+        case $mode in 1) return ;; 2) break ;; *) printf '%s\n' 'Choose 1 or 2.' ;; esac
+    done
+    while :; do
+        bootstrap_prompt 'Existing HTTPS proxy origin (for example https://panel.example.com): '
+        if [[ -n $REPLY ]] && (bootstrap_origin "$REPLY"); then
+            PANEL_ARGS+=(--origin "$REPLY")
+            return
+        fi
+    done
+}
+
 bootstrap_arguments() {
     PANEL_BOOTSTRAP_YES=0
     PANEL_BOOTSTRAP_UPDATE=0
-    local option name value seen=' ' has_repo=0 has_origin=0
+    PANEL_BOOTSTRAP_STATUS=0
+    local option name value seen=' ' has_settings=0 actions=0 has_version=0
     while (( $# )); do
         option=$1
         shift
         case $option in
             --help|-h) bootstrap_help; exit 0 ;;
-            --yes|--update) name=$option; value='' ;;
-            --repo|--version|--origin)
+            --yes|--update|--upgrade|--status|--migrate-manager) name=$option; value='' ;;
+            --repo|--version|--origin|--port)
                 name=$option
                 (( $# )) || bootstrap_fail "Missing value for $name."
                 value=$1
                 shift ;;
-            --repo=*|--version=*|--origin=*) name=${option%%=*}; value=${option#*=} ;;
+            --repo=*|--version=*|--origin=*|--port=*) name=${option%%=*}; value=${option#*=} ;;
             *) bootstrap_fail "Unknown command-line option: $option" ;;
         esac
         [[ $seen != *" $name "* ]] || bootstrap_fail 'Duplicate command-line option.'
         seen+="$name "
         case $name in
             --yes) PANEL_BOOTSTRAP_YES=1 ;;
-            --update) PANEL_BOOTSTRAP_UPDATE=1 ;;
-            --repo) bootstrap_repo "$value"; has_repo=1 ;;
-            --version) bootstrap_version "$value" ;;
-            --origin) bootstrap_origin "$value"; has_origin=1 ;;
+            --update) PANEL_BOOTSTRAP_UPDATE=1; actions=$((actions + 1)) ;;
+            --upgrade|--migrate-manager) actions=$((actions + 1)) ;;
+            --status) PANEL_BOOTSTRAP_STATUS=1; actions=$((actions + 1)) ;;
+            --repo) bootstrap_repo "$value"; has_settings=1 ;;
+            --version) bootstrap_version "$value"; has_version=1 ;;
+            --origin) bootstrap_origin "$value"; has_settings=1 ;;
+            --port) bootstrap_port "$value"; has_settings=1 ;;
         esac
     done
-    if (( PANEL_BOOTSTRAP_UPDATE )); then
-        (( !has_repo && !has_origin )) || bootstrap_fail 'Update settings come only from root-owned install.json; --repo/--origin are forbidden.'
-    else
-        (( has_repo )) || bootstrap_fail 'First installation requires --repo OWNER/REPO.'
+    (( actions <= 1 )) || bootstrap_fail 'Choose exactly one management action.'
+    if (( actions )); then
+        (( !has_settings )) || bootstrap_fail 'Update/status settings come only from root-owned install.json; --repo/--origin/--port are forbidden.'
     fi
+    (( !PANEL_BOOTSTRAP_STATUS || (!has_version && !PANEL_BOOTSTRAP_YES) )) || bootstrap_fail '--status accepts no mutation options.'
 }
 
 bootstrap_root() {
@@ -117,8 +168,18 @@ bootstrap_os_release() {
         esac
     done
     case $id:$version in
-        debian:12|debian:13|ubuntu:22.04|ubuntu:24.04) ;;
-        *) bootstrap_fail 'Supported systems: Debian 12/13 or Ubuntu 22.04/24.04 only.' ;;
+        debian:12|debian:13|ubuntu:22.04|ubuntu:24.04)
+            PANEL_PACKAGE_MANAGER=apt
+            PANEL_CA_FILE=/etc/ssl/certs/ca-certificates.crt
+            PANEL_ACCOUNT_PACKAGE=passwd
+            PANEL_NOLOGIN_PACKAGE=login ;;
+        rocky:9|rocky:9.[0-9]*|rocky:10|rocky:10.[0-9]*|almalinux:9|almalinux:9.[0-9]*|almalinux:10|almalinux:10.[0-9]*)
+            [[ $version =~ ^(9|10)(\.[0-9]+)?$ ]] || bootstrap_fail 'Invalid operating-system version.'
+            PANEL_PACKAGE_MANAGER=dnf
+            PANEL_CA_FILE=/etc/pki/tls/certs/ca-bundle.crt
+            PANEL_ACCOUNT_PACKAGE=shadow-utils
+            PANEL_NOLOGIN_PACKAGE=util-linux-core ;;
+        *) bootstrap_fail 'Supported systems: Debian 12/13, Ubuntu 22.04/24.04, Rocky/AlmaLinux 9/10 only.' ;;
     esac
 }
 
@@ -150,12 +211,11 @@ bootstrap_python_ready() {
 }
 
 bootstrap_ca_ready() {
-    [[ -r /etc/ssl/certs/ca-certificates.crt && -s /etc/ssl/certs/ca-certificates.crt ]] || return 1
-    # If Python is absent, only the file check is possible in this pass. The
-    # mandatory post-install pass validates its actual CA contents with OpenSSL.
+    [[ -r $PANEL_CA_FILE && -s $PANEL_CA_FILE ]] || return 1
+    # Recheck actual CA contents after installing Python; never use insecure TLS.
     (( $1 )) || return 0
     /usr/bin/python3 -I -c \
-        'import ssl, sys; ctx = ssl.create_default_context(cafile="/etc/ssl/certs/ca-certificates.crt"); sys.exit(0 if ctx.cert_store_stats()["x509_ca"] else 1)' >/dev/null 2>&1
+        'import ssl, sys; ctx = ssl.create_default_context(cafile=sys.argv[1]); sys.exit(0 if ctx.cert_store_stats()["x509_ca"] else 1)' "$PANEL_CA_FILE" >/dev/null 2>&1
 }
 
 bootstrap_account_tools_ready() {
@@ -171,8 +231,8 @@ bootstrap_missing() {
     local python_ready=0
     if bootstrap_python_ready; then python_ready=1; else PANEL_MISSING+=(python3); fi
     bootstrap_ca_ready "$python_ready" || PANEL_MISSING+=(ca-certificates)
-    bootstrap_account_tools_ready || PANEL_MISSING+=(passwd)
-    bootstrap_nologin_ready || PANEL_MISSING+=(util-linux)
+    bootstrap_account_tools_ready || PANEL_MISSING+=("$PANEL_ACCOUNT_PACKAGE")
+    bootstrap_nologin_ready || PANEL_MISSING+=("$PANEL_NOLOGIN_PACKAGE")
 }
 
 bootstrap_answer() {
@@ -184,7 +244,7 @@ bootstrap_answer() {
 
 bootstrap_confirm() {
     printf 'Missing or unusable minimum dependencies: %s\n' "$*"
-    printf '%s\n' 'APT will update its package index and install only this allowlist; no system upgrade or source changes.'
+    printf '%s will install only missing allowlisted dependencies; no system upgrade, sources or SELinux changes.\n' "$PANEL_PACKAGE_MANAGER"
     if (( !PANEL_BOOTSTRAP_YES )); then
         local REPLY=''
         bootstrap_answer
@@ -196,7 +256,7 @@ bootstrap_apt() {
     local package
     (( $# )) || bootstrap_fail 'No dependencies were selected.'
     for package in "$@"; do
-        case $package in python3|ca-certificates|passwd|util-linux) ;; *) bootstrap_fail 'Unapproved dependency package.' ;; esac
+        case $package in python3|ca-certificates|passwd|login) ;; *) bootstrap_fail 'Unapproved dependency package.' ;; esac
     done
     [[ -x /usr/bin/apt-get && -x /usr/bin/timeout && -x /usr/bin/env ]] ||
         bootstrap_fail 'The supported base system must provide apt-get and coreutils (env/timeout).'
@@ -214,23 +274,47 @@ bootstrap_apt() {
         bootstrap_fail 'APT dependency installation failed; the existing panel binary and service were not touched.'
 }
 
+bootstrap_dnf() {
+    local package
+    (( $# )) || bootstrap_fail 'No dependencies were selected.'
+    for package in "$@"; do
+        case $package in python3|ca-certificates|shadow-utils|util-linux-core) ;; *) bootstrap_fail 'Unapproved dependency package.' ;; esac
+    done
+    [[ -x /usr/bin/dnf && -x /usr/bin/timeout && -x /usr/bin/env ]] ||
+        bootstrap_fail 'The supported base system must provide dnf and coreutils (env/timeout).'
+    /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/ LANG=C LC_ALL=C \
+        /usr/bin/timeout --signal=TERM --kill-after=30s 300s /usr/bin/dnf \
+        --setopt=timeout=15 --setopt=retries=2 --setopt=exit_on_lock=True --setopt=install_weak_deps=False \
+        install --assumeyes "$@" ||
+        bootstrap_fail 'DNF dependency installation failed; the existing panel binary and service were not touched.'
+}
+
 bootstrap() {
-    bootstrap_arguments "$@"
+    PANEL_ARGS=("$@")
+    (( ${#PANEL_ARGS[@]} )) || bootstrap_menu
+    bootstrap_arguments "${PANEL_ARGS[@]}"
     bootstrap_root
+    if (( PANEL_BOOTSTRAP_STATUS )); then
+        bootstrap_python_ready || bootstrap_fail 'Read-only status requires an existing Python 3.8+; no packages were installed.'
+        return 0
+    fi
     bootstrap_system
     bootstrap_update_source
     local attempted=' ' package round
-    # At most two passes: installing absent Python may reveal a malformed CA
-    # store. Never retry a dependency that an APT pass failed to make usable.
+    # Two bounded passes: installing Python may expose a malformed CA store.
     for round in 1 2; do
         bootstrap_missing
         (( ${#PANEL_MISSING[@]} )) || return 0
         for package in "${PANEL_MISSING[@]}"; do
-            [[ $attempted != *" $package "* ]] || bootstrap_fail "Dependency remains unavailable after APT: $package. Panel service/binary untouched."
+            [[ $attempted != *" $package "* ]] || bootstrap_fail "Dependency remains unavailable after package installation: $package. Panel service/binary untouched."
         done
         bootstrap_confirm "${PANEL_MISSING[@]}"
         for package in "${PANEL_MISSING[@]}"; do attempted+="$package "; done
-        bootstrap_apt "${PANEL_MISSING[@]}"
+        case $PANEL_PACKAGE_MANAGER in
+            apt) bootstrap_apt "${PANEL_MISSING[@]}" ;;
+            dnf) bootstrap_dnf "${PANEL_MISSING[@]}" ;;
+            *) bootstrap_fail 'Unknown package manager.' ;;
+        esac
     done
     bootstrap_missing
     (( ${#PANEL_MISSING[@]} == 0 )) || bootstrap_fail "Dependency recheck failed: ${PANEL_MISSING[*]}. Panel service/binary untouched."
@@ -239,10 +323,12 @@ bootstrap() {
 # Tests compile the definitions above in an isolated harness; there is no runtime
 # environment/CLI switch for bypassing bootstrap or choosing production paths.
 bootstrap "$@"
+set -- "${PANEL_ARGS[@]}"
 # The source descriptor comes from Bash, never from a user-supplied CLI option.
 exec 4<"${BASH_SOURCE[0]}"
 exec /usr/bin/python3 -I - "${BASH_SOURCE[0]}" "$@" <<'PANEL_PYTHON'
 import argparse
+import base64
 import contextlib
 import datetime
 import hashlib
@@ -273,11 +359,19 @@ TAR_LIMIT = BINARY_LIMIT + 10240
 MANIFEST_LIMIT = 32 * 1024
 SUMS_LIMIT = 16 * 1024
 API_LIMIT = 1024 * 1024
-SCRIPT_LIMIT = 128 * 1024
+SCRIPT_LIMIT = 512 * 1024
+WRAPPER_LIMIT = 32 * 1024
 UNIT = "server-panel.service"
 ACCOUNT = "server-panel"
+DEFAULT_REPO = "LinyuFiee/QQON-Panel"
 LISTEN = "127.0.0.1:5173"
-NAMES = {"panel-linux-amd64.tar.gz", "panel-linux-arm64.tar.gz", "install.sh", "update.sh", "release.json", "SHA256SUMS"}
+LEGACY_INSTALLER_SHA256 = "bc78f2ec682704bb5beb965806ec56e511827f6d3451949a03d5b40db535eb91"
+LEGACY_WRAPPER_SHA256 = "5cdc4f05cce7189b7212e5b12496e0754985c45c1462fc2ce0aa1a86f81b1408"
+LEGACY_NAMES = {"panel-linux-amd64.tar.gz", "panel-linux-arm64.tar.gz", "install.sh", "update.sh", "release.json", "SHA256SUMS"}
+NAMES = LEGACY_NAMES | {"panel-windows-amd64.zip", "install.ps1", "update.ps1"}
+BINARY_TARGETS = {("linux", "amd64"): ("panel", "panel-linux-amd64.tar.gz"),
+                  ("linux", "arm64"): ("panel", "panel-linux-arm64.tar.gz"),
+                  ("windows", "amd64"): ("panel.exe", "panel-windows-amd64.zip")}
 CDN_HOSTS = {"github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com", "github-releases.githubusercontent.com"}
 HEX = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
 COMMIT = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z", re.ASCII)
@@ -334,9 +428,18 @@ def repository(value):
     return value
 
 
-def origin(value):
+def listener(value):
+    require(isinstance(value, str) and re.fullmatch(r"127\.0\.0\.1:([1-9][0-9]{3,4})", value, re.ASCII),
+            "Installation listener must be a fixed loopback address with port 1024-65535.")
+    port = int(value.rsplit(":", 1)[1])
+    require(1024 <= port <= 65535, "Port must be from 1024 to 65535.")
+    return port
+
+
+def origin(value, listen=LISTEN):
+    listener(listen)
     if value == "":
-        return "", LISTEN
+        return "", listen
     require(isinstance(value, str) and len(value) <= 300 and value.isascii(), "Origin must be an HTTPS ASCII domain.")
     require(not any(ord(char) <= 32 or ord(char) == 127 for char in value) and "%" not in value,
             "Invalid characters in origin.")
@@ -454,6 +557,14 @@ def deadline(seconds):
         signal.signal(signal.SIGALRM, previous)
 
 
+def system_ca_file():
+    # Fixed distro CA locations only; no inherited SSL_CERT_FILE or custom trust.
+    for path in ("/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt"):
+        if os.path.isfile(path) and os.path.getsize(path) > 0:
+            return path
+    raise Failure("No supported system CA bundle is available.")
+
+
 class Downloads:
     # Dependency injection is an import-only testing API, never a CLI/environment option.
     def __init__(self, opener=None, timer=deadline):
@@ -464,7 +575,7 @@ class Downloads:
         require(0 < timeout <= (15 if api else 120), "Invalid network deadline.")
         handler = Redirects(url, api)
         opener = self.opener or urllib.request.build_opener(urllib.request.ProxyHandler({}), handler,
-                    urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile="/etc/ssl/certs/ca-certificates.crt")))
+                    urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=system_ca_file())))
         request = urllib.request.Request(url, headers={
             "Accept": "application/vnd.github+json" if api else "application/octet-stream",
             "Accept-Encoding": "identity", "User-Agent": "server-panel-installer/1",
@@ -509,7 +620,15 @@ class Downloads:
                 output.close()
 
 
-def release_api(raw, repo, requested):
+def asset_limit(name):
+    if name in {target[1] for target in BINARY_TARGETS.values()}:
+        return ARCHIVE_LIMIT
+    return {"release.json": MANIFEST_LIMIT, "SHA256SUMS": SUMS_LIMIT,
+            "install.sh": SCRIPT_LIMIT, "install.ps1": SCRIPT_LIMIT,
+            "update.sh": WRAPPER_LIMIT, "update.ps1": WRAPPER_LIMIT}[name]
+
+
+def release_api(raw, repo, requested, legacy=False):
     value = strict_json(raw, API_LIMIT)
     require(value.get("draft") is False and value.get("prerelease") is False, "A published stable release is required.")
     tag = value.get("tag_name")
@@ -518,65 +637,72 @@ def release_api(raw, repo, requested):
     require(value.get("html_url") == "https://github.com/" + repo + "/releases/tag/" + tag,
             "GitHub returned a non-canonical Release URL.")
     assets = value.get("assets")
-    require(type(assets) is list and len(assets) == len(NAMES), "Release must contain the six contracted assets.")
+    expected = LEGACY_NAMES if legacy else NAMES
+    require(type(assets) is list and len(assets) == len(expected),
+            "Release must contain the contracted " + ("six legacy" if legacy else "nine format 3") + " assets; new management requires >=v0.5.0 format 3.")
     sizes = {}
     for asset in assets:
         require(type(asset) is dict and isinstance(asset.get("name"), str), "Invalid release asset.")
         name = asset["name"]
-        require(name in NAMES and name not in sizes, "Unknown or duplicate release asset.")
-        maximum = ARCHIVE_LIMIT if name.startswith("panel-linux-") else {"release.json": MANIFEST_LIMIT, "SHA256SUMS": SUMS_LIMIT,
-                                                                       "install.sh": SCRIPT_LIMIT, "update.sh": SUMS_LIMIT}[name]
-        require(integer(asset.get("size"), 1, maximum), "Invalid release asset size.")
+        require(name in expected and name not in sizes, "Unknown or duplicate release asset.")
+        require(integer(asset.get("size"), 1, asset_limit(name)), "Invalid release asset size.")
         require(asset.get("browser_download_url") == canonical(repo, tag, name), "Non-canonical asset download URL.")
         require(asset.get("state", "uploaded") == "uploaded", "A release asset is not fully uploaded.")
         sizes[name] = asset["size"]
-    require(set(sizes) == NAMES, "Missing release assets.")
+    require(set(sizes) == expected, "Missing release assets.")
     return tag, sizes
 
 
-def checksums(raw):
+def checksums(raw, legacy=False):
     require(isinstance(raw, bytes) and 0 < len(raw) <= SUMS_LIMIT and raw.endswith(b"\n"), "Invalid SHA256SUMS.")
     try:
         lines = raw.decode("ascii").splitlines(keepends=True)
     except UnicodeError as exc:
         raise Failure("SHA256SUMS must be ASCII.") from exc
+    expected = (LEGACY_NAMES if legacy else NAMES) - {"SHA256SUMS"}
     result = {}
     for line in lines:
         match = re.fullmatch(r"([0-9a-f]{64})  ([A-Za-z0-9_.-]+)\n", line, re.ASCII)
         require(match is not None, "Invalid SHA256SUMS line.")
         digest, name = match.groups()
-        require(name in NAMES - {"SHA256SUMS"} and name not in result, "Unknown or duplicate checksum asset.")
+        require(name in expected and name not in result, "Unknown or duplicate checksum asset.")
         result[name] = digest
-    require(set(result) == NAMES - {"SHA256SUMS"}, "SHA256SUMS does not cover exactly the expected assets.")
+    require(set(result) == expected, "SHA256SUMS does not cover exactly the expected assets.")
     return result
 
 
-def manifest(raw, sums, repo, tag):
+def manifest(raw, sums, repo, tag, legacy=False):
     require(hashlib.sha256(raw).hexdigest() == sums["release.json"], "Manifest SHA-256 mismatch.")
     value = strict_json(raw, MANIFEST_LIMIT)
     fields(value, ("format", "version", "tag", "repository", "dataSchema", "commit", "buildTime", "binaries"))
-    require(integer(value["format"], 2, 2) and integer(value["dataSchema"], 1, 1), "Only manifest format 2 and data schema 1 are supported; format 1 bare binaries are not accepted.")
+    expected_format = 2 if legacy else 3
+    require(integer(value["format"], expected_format, expected_format) and integer(value["dataSchema"], 1, 1),
+            "Only manifest format " + str(expected_format) + " and data schema 1 are supported for this operation.")
     version_tuple(value["version"])
     require(value["tag"] == tag and value["version"] == tag[1:] and value["repository"] == repo, "Manifest release identity mismatch.")
     require(isinstance(value["commit"], str) and COMMIT.fullmatch(value["commit"]), "Invalid release commit.")
     release_date(value["buildTime"])
     binaries = value["binaries"]
-    require(type(binaries) is list and len(binaries) == 2, "Manifest must describe exactly amd64 and arm64.")
+    targets = {key: target for key, target in BINARY_TARGETS.items() if not legacy or key[0] == "linux"}
+    require(type(binaries) is list and len(binaries) == len(targets), "Manifest must describe exactly the contracted binary records.")
     seen = set()
     for binary in binaries:
         fields(binary, ("os", "arch", "name", "size", "sha256", "archive"))
-        arch = binary["arch"]
-        require(isinstance(arch, str) and arch in ("amd64", "arm64") and arch not in seen, "Invalid manifest architecture.")
-        seen.add(arch)
-        require(binary["os"] == "linux" and binary["name"] == "panel", "Invalid inner binary identity.")
+        require(isinstance(binary["os"], str) and isinstance(binary["arch"], str), "Invalid manifest platform.")
+        key = binary["os"], binary["arch"]
+        require(key in targets and key not in seen, "Invalid or duplicate manifest platform.")
+        seen.add(key)
+        binary_name, archive_name = targets[key]
+        require(binary["name"] == binary_name, "Invalid inner binary identity.")
         require(integer(binary["size"], 1, BINARY_LIMIT), "Invalid binary size.")
         require(isinstance(binary["sha256"], str) and HEX.fullmatch(binary["sha256"]), "Invalid inner binary SHA-256.")
         archive = binary["archive"]
         fields(archive, ("name", "size", "sha256"))
-        require(archive["name"] == "panel-linux-" + arch + ".tar.gz", "Invalid archive asset identity.")
+        require(archive["name"] == archive_name, "Invalid archive asset identity.")
         require(integer(archive["size"], 1, ARCHIVE_LIMIT), "Invalid archive size.")
         require(isinstance(archive["sha256"], str) and HEX.fullmatch(archive["sha256"])
-                and archive["sha256"] == sums[archive["name"]], "Archive manifest/checksum mismatch.")
+                and archive["sha256"] == sums[archive_name], "Archive manifest/checksum mismatch.")
+    require(seen == set(targets), "Missing manifest binary record.")
     return value
 
 
@@ -680,10 +806,12 @@ class Paths:
     previous = Path("/usr/local/bin/panel.previous")
     code_dir = Path("/usr/local/lib/server-panel")
     installer = code_dir / "install.sh"
+    manager_previous = code_dir / "install.sh.v0.4.0.previous"
     updater = Path("/usr/local/bin/panel-update")
     config_dir = Path("/etc/server-panel")
     config = config_dir / "install.json"
     transaction = config_dir / "update-transaction.json"
+    migration = config_dir / "manager-migration.json"
     unit = Path("/etc/systemd/system/server-panel.service")
     data = Path("/var/lib/server-panel")
     lock_dir = Path("/run/server-panel-update")
@@ -797,7 +925,8 @@ class SafeFiles:
             directory.rmdir()
 
 
-def unit_bytes(config):
+def legacy_unit_bytes(config):
+    # Exact v0.4.0 template; keep these bytes for the pinned-manager migration.
     repo = repository(config["repository"])
     normalized, host = origin(config["origin"])
     require(normalized == config["origin"] and host == config["healthHost"], "Non-normalized installation origin.")
@@ -849,6 +978,15 @@ WantedBy=multi-user.target
 """).encode("utf-8")
 
 
+def unit_bytes(config):
+    listen = config["listen"]
+    listener(listen)
+    normalized, host = origin(config["origin"], listen)
+    require(normalized == config["origin"] and host == config["healthHost"], "Non-normalized installation origin.")
+    legacy = dict(config, listen=LISTEN, healthHost=origin(normalized)[1])
+    return legacy_unit_bytes(legacy).replace(b"-listen 127.0.0.1:5173 ", b"-listen " + listen.encode("ascii") + b" ", 1)
+
+
 def config_bytes(config):
     return (json.dumps(config, ensure_ascii=True, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
@@ -860,8 +998,8 @@ def installation_config(raw):
     require(integer(value["format"], 1, 1) and integer(value["dataSchema"], 1, 1), "Unsupported installation format/data schema.")
     repository(value["repository"])
     version_tuple(value["version"])
-    require(value["listen"] == LISTEN, "Installation listener is not the fixed loopback address.")
-    normalized, host = origin(value["origin"])
+    listener(value["listen"])
+    normalized, host = origin(value["origin"], value["listen"])
     require(normalized == value["origin"] and host == value["healthHost"], "Installation origin/health Host mismatch.")
     for key in ("binarySHA256", "installerSHA256"):
         require(isinstance(value[key], str) and HEX.fullmatch(value[key]), "Invalid installation SHA-256.")
@@ -883,6 +1021,20 @@ def update_transaction(raw):
     return value
 
 
+def manager_migration(raw):
+    value = strict_json(raw, MANIFEST_LIMIT)
+    fields(value, ("format", "phase", "old", "new"))
+    require(integer(value["format"], 1, 1) and value["phase"] in ("prepared", "ready"), "Invalid manager migration phase/format.")
+    old = installation_config(config_bytes(value["old"]))
+    new = installation_config(config_bytes(value["new"]))
+    require(old["installerSHA256"] == LEGACY_INSTALLER_SHA256 and old["listen"] == LISTEN,
+            "Only the pinned v0.4.0 manager can be migrated.")
+    require(new["installerSHA256"] != old["installerSHA256"]
+            and dict(new, installerSHA256=old["installerSHA256"]) == old,
+            "Manager migration may change only installerSHA256.")
+    return value
+
+
 class Runtime:
     def preflight(self, files):
         require(sys.platform == "linux" and os.geteuid() == 0, "Management requires root on systemd Linux.")
@@ -891,7 +1043,7 @@ class Runtime:
         require(sys.version_info >= (3, 8), "Python 3.8 or newer is required after dependency bootstrap.")
         files.check(Path("/run/systemd/system"), directory=True)
         try:
-            trust = ssl.create_default_context(cafile="/etc/ssl/certs/ca-certificates.crt")
+            trust = ssl.create_default_context(cafile=system_ca_file())
             require(trust.cert_store_stats()["x509_ca"] > 0, "A usable system CA store is required after dependency bootstrap.")
         except (OSError, ssl.SSLError) as exc:
             raise Failure("A usable system CA store is required after dependency bootstrap.") from exc
@@ -1029,7 +1181,7 @@ class Runtime:
         require(answer.strip() == "yes", "Cancelled; installation state was not changed.")
 
     def health_once(self, config, timeout):
-        connection = http.client.HTTPConnection("127.0.0.1", 5173, timeout=min(2, timeout))
+        connection = http.client.HTTPConnection("127.0.0.1", listener(config["listen"]), timeout=min(2, timeout))
         try:
             with deadline(min(2, timeout)):
                 connection.request("GET", "/healthz", headers={"Host": config["healthHost"], "Connection": "close"})
@@ -1102,8 +1254,15 @@ class Manager:
         f.check(p.config_dir, directory=True, mode=0o755)
         require(hashlib.sha256(f.read(p.installer, SCRIPT_LIMIT, mode=0o755)).hexdigest() == config["installerSHA256"],
                 "Installed management script was modified; updates never silently replace it.")
-        require(f.read(p.updater, SUMS_LIMIT, mode=0o755) == WRAPPER, "Unknown or modified panel-update wrapper.")
-        require(f.read(p.unit, SUMS_LIMIT, mode=0o644) == unit_bytes(config), "Unknown or modified service unit.")
+        wrapper = f.read(p.updater, WRAPPER_LIMIT, mode=0o755)
+        require(wrapper == WRAPPER, "Unknown or modified panel-update wrapper.")
+        if config["installerSHA256"] == LEGACY_INSTALLER_SHA256:
+            require(config["listen"] == LISTEN and hashlib.sha256(wrapper).hexdigest() == LEGACY_WRAPPER_SHA256,
+                    "Unknown legacy manager settings or wrapper.")
+            expected_unit = legacy_unit_bytes(config)
+        else:
+            expected_unit = unit_bytes(config)
+        require(f.read(p.unit, SUMS_LIMIT, mode=0o644) == expected_unit, "Unknown or modified service unit.")
         if f.exists(p.previous):
             f.check(p.previous, mode=0o755)
         identity = r.account(p.data)
@@ -1122,17 +1281,118 @@ class Manager:
         current = build_info(r.binary_info(p.binary), config["repository"], arch, config)
         return config, raw, current
 
-    def clear_transaction(self, raw):
+    def status(self):
+        # Deliberately no management lock (which creates files), account lookup,
+        # subprocess, network, preflight, recovery or binary execution.
         p, f = self.paths, self.files
-        require(f.read(p.transaction, MANIFEST_LIMIT, mode=0o600) == raw, "Update transaction changed before completion.")
+        if not f.exists(p.config):
+            print("No recognized installation metadata. Read-only status; no changes made.")
+            return
+        config = installation_config(f.read(p.config, MANIFEST_LIMIT, mode=0o644))
+        result = {key: config[key] for key in ("repository", "version", "listen", "origin", "dataSchema")}
+        result["readOnly"] = True
+        result["service"] = "not probed"
+        result["managerMatchesRecord"] = hashlib.sha256(f.read(p.installer, SCRIPT_LIMIT, mode=0o755)).hexdigest() == config["installerSHA256"]
+        result["binaryMatchesRecord"] = hashlib.sha256(f.read(p.binary, BINARY_LIMIT, mode=0o755)).hexdigest() == config["binarySHA256"]
+        result["pendingBinaryRecovery"] = f.exists(p.transaction)
+        result["pendingManagerRecovery"] = f.exists(p.migration)
+        print(json.dumps(result, ensure_ascii=True, sort_keys=True))
+
+    def known_manager(self, source):
+        p, f = self.paths, self.files
+        if not f.exists(p.config):
+            return
+        config = installation_config(f.read(p.config, MANIFEST_LIMIT, mode=0o644))
+        digest = hashlib.sha256(f.read(p.installer, SCRIPT_LIMIT, mode=0o755)).hexdigest()
+        require(digest == config["installerSHA256"], "Installed management script was modified; refusing adoption.")
+        require(digest in (hashlib.sha256(source).hexdigest(), LEGACY_INSTALLER_SHA256),
+                "Unknown installed manager; only this reviewed manager or the pinned v0.4.0 manager is supported.")
+
+    def clear_marker(self, path, raw):
+        p, f = self.paths, self.files
+        require(path in (p.transaction, p.migration), "Unknown management marker path.")
+        require(f.read(path, MANIFEST_LIMIT, mode=0o600) == raw, "Management transaction changed before completion.")
         try:
-            os.unlink(p.transaction)
-            f.sync_dir(p.transaction.parent)
+            os.unlink(path)
+            f.sync_dir(path.parent)
         except BaseException:
-            # If unlink succeeded but its fsync failed, preserve a retryable marker where possible.
-            if not f.exists(p.transaction):
-                f.atomic_bytes(p.transaction, raw, 0o600)
+            if not f.exists(path):
+                f.atomic_bytes(path, raw, 0o600)
             raise
+
+    def clear_transaction(self, raw):
+        self.clear_marker(self.paths.transaction, raw)
+
+    def recover_migration(self):
+        p, f, r = self.paths, self.files, self.runtime
+        if not f.exists(p.migration):
+            return False
+        require(not f.exists(p.transaction), "Conflicting binary and manager transactions; refusing automatic recovery.")
+        raw = f.read(p.migration, MANIFEST_LIMIT, mode=0o600)
+        marker = manager_migration(raw)
+        old, new = marker["old"], marker["new"]
+        config = installation_config(f.read(p.config, MANIFEST_LIMIT, mode=0o644))
+        require(config == old or (marker["phase"] == "ready" and config == new), "Manager migration does not match installed metadata.")
+        current = f.read(p.installer, SCRIPT_LIMIT, mode=0o755)
+        digest = hashlib.sha256(current).hexdigest()
+        require(digest == LEGACY_INSTALLER_SHA256 or (marker["phase"] == "ready" and digest == new["installerSHA256"]),
+                "Unknown manager or incomplete backup phase; refusing migration recovery.")
+        backup = None
+        if marker["phase"] == "ready" or f.exists(p.manager_previous):
+            backup = f.read(p.manager_previous, SCRIPT_LIMIT, mode=0o755)
+            require(hashlib.sha256(backup).hexdigest() == LEGACY_INSTALLER_SHA256, "Manager backup SHA-256 mismatch.")
+        self.inspect_management(dict(old, installerSHA256=digest))
+        require(hashlib.sha256(f.read(p.binary, BINARY_LIMIT, mode=0o755)).hexdigest() == old["binarySHA256"],
+                "Installed binary SHA-256 mismatch during manager recovery.")
+        try:
+            with r.rollback_signals():
+                if digest != LEGACY_INSTALLER_SHA256:
+                    f.atomic_bytes(p.installer, backup, 0o755)
+                f.atomic_bytes(p.config, config_bytes(old), 0o644)
+                self.clear_marker(p.migration, raw)
+        except BaseException as exc:
+            raise Failure("Manager migration recovery failed; journal and verified backup retained for retry.") from exc
+        print("Interrupted manager migration restored the pinned v0.4.0 manager. Application, unit and wrapper were not changed.")
+        return True
+
+    def migrate_manager(self, old, source):
+        p, f, r = self.paths, self.files, self.runtime
+        require(not f.exists(p.transaction) and not f.exists(p.migration), "Pending transactions must be recovered before manager migration.")
+        require(old["installerSHA256"] == LEGACY_INSTALLER_SHA256 and old["listen"] == LISTEN,
+                "Only the pinned v0.4.0 manager can be migrated.")
+        new = dict(old, installerSHA256=hashlib.sha256(source).hexdigest())
+        marker = {"format": 1, "phase": "prepared", "old": old, "new": new}
+        raw = config_bytes(marker)
+        manager_migration(raw)
+        previous = f.read(p.installer, SCRIPT_LIMIT, mode=0o755)
+        require(hashlib.sha256(previous).hexdigest() == LEGACY_INSTALLER_SHA256, "Legacy manager SHA-256 mismatch.")
+        if f.exists(p.manager_previous):
+            require(hashlib.sha256(f.read(p.manager_previous, SCRIPT_LIMIT, mode=0o755)).hexdigest() == LEGACY_INSTALLER_SHA256,
+                    "Unknown manager backup; refusing overwrite.")
+        # Never let --yes opt into replacing management code. The source is the
+        # locally reviewed descriptor read by main(), not a downloaded asset.
+        r.confirm("Migrate the verified v0.4.0 manager to this reviewed script. Only installerSHA256 changes; "
+                  "binary, account data, listener, unit and wrapper remain unchanged. Separate TTY confirmation is required.", False)
+        f.atomic_bytes(p.migration, raw, 0o600)
+        try:
+            f.atomic_bytes(p.manager_previous, previous, 0o755)
+            require(hashlib.sha256(f.read(p.manager_previous, SCRIPT_LIMIT, mode=0o755)).hexdigest() == LEGACY_INSTALLER_SHA256,
+                    "Manager backup SHA-256 mismatch.")
+            marker["phase"] = "ready"
+            raw = config_bytes(marker)
+            f.atomic_bytes(p.migration, raw, 0o600)
+            f.atomic_bytes(p.installer, source, 0o755)
+            require(hashlib.sha256(f.read(p.installer, SCRIPT_LIMIT, mode=0o755)).hexdigest() == new["installerSHA256"],
+                    "New manager SHA-256 mismatch.")
+            f.atomic_bytes(p.config, config_bytes(new), 0o644)
+            self.clear_marker(p.migration, raw)
+        except BaseException as exc:
+            try:
+                self.recover_migration()
+            except BaseException as rollback:
+                raise Failure("Manager migration failed; rollback also failed. Journal and backup retained; application data was not changed.") from rollback
+            raise Failure("Manager migration failed; rollback succeeded. The pinned old manager was restored.") from exc
+        print("Manager migration complete; application binary unchanged. Run sudo panel-update to upgrade the application separately.")
 
     def recover_transaction(self, arch):
         p, f, r = self.paths, self.files, self.runtime
@@ -1206,7 +1466,7 @@ class Manager:
 
         sums = checksums(fetch("SHA256SUMS", SUMS_LIMIT))
         metadata = manifest(fetch("release.json", MANIFEST_LIMIT), sums, repo, tag)
-        selected = next(binary for binary in metadata["binaries"] if binary["arch"] == arch)
+        selected = next(binary for binary in metadata["binaries"] if binary["os"] == "linux" and binary["arch"] == arch)
         require(all(binary["archive"]["size"] == sizes[binary["archive"]["name"]] for binary in metadata["binaries"]),
                 "Archive API/manifest size mismatch.")
         archive = selected["archive"]
@@ -1314,22 +1574,37 @@ class Manager:
 
     def execute(self, options, source, arch):
         p, f, r = self.paths, self.files, self.runtime
+        if options.status:
+            return self.status()
         with r.lock(p, f):
+            if self.recover_migration():
+                return
+            self.known_manager(source)
             recovered = self.recover_transaction(arch)
             if f.exists(p.config):
                 old, old_raw, current = self.inspect(arch)
                 if recovered:
                     print("Interrupted update recovered; v" + current["version"]
-                          + " is healthy. No new release was attempted; run sudo panel-update again when ready.")
+                          + " is healthy. No manager migration or new release was attempted; invoke the reviewed script again when ready.")
                     return
-                if not options.update:
-                    require(options.repo == old["repository"] and (options.origin is None or options.origin == old["origin"]),
+                if old["installerSHA256"] == LEGACY_INSTALLER_SHA256:
+                    require(options.upgrade or options.migrate_manager,
+                            "The pinned v0.4.0 manager requires explicit --upgrade or --migrate-manager with separate TTY confirmation.")
+                    self.migrate_manager(old, source)
+                    return
+                if options.migrate_manager:
+                    print("This reviewed manager is already installed; no migration needed.")
+                    return
+                if not (options.update or options.upgrade):
+                    require(options.repo == old["repository"] and (options.origin is None or options.origin == old["origin"])
+                            and (options.port is None or options.port == listener(old["listen"])),
                             "Existing installation uses different settings; it will not be overwritten.")
                     print("Already installed at v" + current["version"] + "; account, data and configuration preserved. Use sudo panel-update.")
                     return
                 repo = old["repository"]
             else:
-                require(not options.update, "No recognized installation exists; first run the reviewed local install.sh.")
+                require(not (options.update or options.upgrade or options.migrate_manager),
+                        "No recognized installation exists; first run the reviewed local install.sh.")
                 self.initial_check()
                 repo, old, old_raw = options.repo, None, None
             tag, sizes = self.target(repo, options.version)
@@ -1339,14 +1614,15 @@ class Manager:
                 if comparison == version_tuple(old["version"]):
                     print("Already running " + tag + "; no changes made.")
                     return
+            listen = old["listen"] if old else "127.0.0.1:" + str(options.port or 5173)
             action = "Update from v" + old["version"] if old else "Install"
             r.confirm(action + " to " + tag + " from " + repo + ". Fixed service: " + UNIT
-                      + "; binary: /usr/local/bin/panel; private data: /var/lib/server-panel; loopback: " + LISTEN + ".", options.yes)
+                      + "; binary: /usr/local/bin/panel; private data: /var/lib/server-panel; loopback: " + listen + ".", options.yes)
             with f.staging(p.binary.parent) as directory:
                 candidate, metadata, digest = self.stage_release(directory, repo, tag, sizes, arch)
-                normalized, host = origin(options.origin or "") if old is None else (old["origin"], old["healthHost"])
+                normalized, host = origin(options.origin or "", listen) if old is None else (old["origin"], old["healthHost"])
                 config = {
-                    "format": 1, "repository": repo, "listen": LISTEN, "origin": normalized, "healthHost": host,
+                    "format": 1, "repository": repo, "listen": listen, "origin": normalized, "healthHost": host,
                     "version": metadata["version"], "dataSchema": 1, "commit": metadata["commit"], "buildTime": metadata["buildTime"],
                     "binarySHA256": digest, "installerSHA256": old["installerSHA256"] if old else hashlib.sha256(source).hexdigest(),
                 }
@@ -1360,11 +1636,15 @@ class Manager:
 
 def arguments(argv):
     parser = argparse.ArgumentParser(description="Install a reviewed GitHub release on systemd Linux, or update the fixed installation.", allow_abbrev=False)
-    parser.add_argument("--repo", help="public GitHub OWNER/REPO; required only for first installation")
-    parser.add_argument("--version", help="stable release tag, e.g. v0.4.0; default: latest")
+    parser.add_argument("--repo", help="public GitHub OWNER/REPO; default: " + DEFAULT_REPO)
+    parser.add_argument("--version", help="stable release tag, e.g. v0.5.0; default: latest")
     parser.add_argument("--origin", help="HTTPS external domain; default: private loopback only")
-    parser.add_argument("--yes", action="store_true", help="explicit unattended confirmation")
+    parser.add_argument("--port", help="fixed loopback port 1024-65535; default: 5173")
+    parser.add_argument("--yes", action="store_true", help="unattended application/dependency confirmation, not manager migration")
     parser.add_argument("--update", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--upgrade", action="store_true", help="update the installed application or explicitly migrate the pinned old manager")
+    parser.add_argument("--migrate-manager", action="store_true", help="migrate only the pinned v0.4.0 manager with separate TTY confirmation")
+    parser.add_argument("--status", action="store_true", help="read-only installation record and pending recovery status")
     seen = set()
     for item in argv:
         if item.startswith("--"):
@@ -1374,19 +1654,27 @@ def arguments(argv):
     result = parser.parse_args(argv)
     if result.version is not None:
         version_tuple(result.version, tagged=True)
-    if result.update:
-        require(result.repo is None and result.origin is None, "Update settings come only from root-owned install.json; --repo/--origin are forbidden.")
+    actions = sum((result.update, result.upgrade, result.migrate_manager, result.status))
+    require(actions <= 1, "Choose exactly one management action.")
+    if actions:
+        require(result.repo is None and result.origin is None and result.port is None,
+                "Update/status settings come only from root-owned install.json; --repo/--origin/--port are forbidden.")
+        require(not result.status or (result.version is None and not result.yes), "--status accepts no mutation options.")
     else:
-        require(result.repo is not None, "First installation requires --repo OWNER/REPO.")
-        result.repo = repository(result.repo)
+        result.repo = repository(result.repo if result.repo is not None else DEFAULT_REPO)
+        if result.port is not None:
+            result.port = listener("127.0.0.1:" + result.port)
         if result.origin is not None:
-            result.origin = origin(result.origin)[0]
+            result.origin = origin(result.origin, "127.0.0.1:" + str(result.port or 5173))[0]
     return result
 
 
 def main():
     options = arguments(sys.argv[2:])
     manager = Manager()
+    if options.status:
+        manager.status()
+        return
     arch = manager.runtime.preflight(manager.files)
     source = read_source(sys.argv[1], manager.paths.installer, manager.files, options.update)
     os.umask(0o077)

@@ -19,10 +19,19 @@ var commitPattern = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
 var assetLimits = map[string]int64{
 	"panel-linux-amd64.tar.gz": maxBinary,
 	"panel-linux-arm64.tar.gz": maxBinary,
-	"install.sh":               256 << 10,
-	"update.sh":                16 << 10,
+	"panel-windows-amd64.zip":  maxBinary,
+	"install.sh":               512 << 10,
+	"update.sh":                32 << 10,
+	"install.ps1":              512 << 10,
+	"update.ps1":               32 << 10,
 	"release.json":             32 << 10,
 	"SHA256SUMS":               16 << 10,
+}
+
+var legacyAssets = map[string]bool{
+	"panel-linux-amd64.tar.gz": true,
+	"panel-linux-arm64.tar.gz": true,
+	"install.sh":               true, "update.sh": true, "release.json": true, "SHA256SUMS": true,
 }
 
 type archiveRecord struct {
@@ -66,8 +75,13 @@ func validateAssets(repo string, release githubRelease) error {
 		}
 		seen[asset.Name] = true
 	}
-	if len(seen) != len(assetLimits) {
-		return errors.New("缺少 Linux 程序、安装脚本、版本清单或 SHA256SUMS")
+	for name := range legacyAssets {
+		if !seen[name] {
+			return errors.New("缺少基础 Linux 程序、安装脚本、版本清单或 SHA256SUMS")
+		}
+	}
+	if len(seen) != len(legacyAssets) && len(seen) != len(assetLimits) {
+		return errors.New("Windows 发行资源不完整")
 	}
 	return nil
 }
@@ -87,7 +101,7 @@ func validateManifest(data, checksumData []byte, repo, version string, schema in
 	var m manifest
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&m); err != nil || m.Format != 2 || m.Version != version || m.Tag != release.Tag || m.Repository != repo || !commitPattern.MatchString(m.Commit) {
+	if err := decoder.Decode(&m); err != nil || (m.Format != 2 && m.Format != 3) || m.Version != version || m.Tag != release.Tag || m.Repository != repo || !commitPattern.MatchString(m.Commit) {
 		return errors.New("版本清单与仓库、标签或提交信息不匹配")
 	}
 	if m.DataSchema != schema || schema != 1 {
@@ -97,27 +111,54 @@ func validateManifest(data, checksumData []byte, repo, version string, schema in
 	if err != nil || buildTime.Format("2006-01-02T15:04:05Z") != m.BuildTime {
 		return errors.New("构建时间格式无效")
 	}
-	if len(m.Binaries) != 2 {
-		return errors.New("版本清单必须包含 amd64 和 arm64 两种 Linux 程序")
+	expected := map[string]string{"linux/amd64": "panel-linux-amd64.tar.gz", "linux/arm64": "panel-linux-arm64.tar.gz"}
+	expectedAssets := legacyAssets
+	if m.Format == 3 {
+		expected["windows/amd64"] = "panel-windows-amd64.zip"
+		expectedAssets = make(map[string]bool, len(assetLimits))
+		for name := range assetLimits {
+			expectedAssets[name] = true
+		}
 	}
-	seen := make(map[string]bool, 2)
+	if len(m.Binaries) != len(expected) || len(sums) != len(expectedAssets)-1 {
+		return errors.New("发行清单的平台数量或校验文件数量不匹配")
+	}
+	for name := range sums {
+		if !expectedAssets[name] {
+			return errors.New("校验清单包含不属于此协议的文件")
+		}
+	}
+	seen := make(map[string]bool, len(expected))
 	for _, binary := range m.Binaries {
-		if binary.OS != "linux" || binary.Arch != "amd64" && binary.Arch != "arm64" || binary.Name != "panel" || binary.Size <= 0 || binary.Size > maxBinary || !checksumPattern.MatchString(binary.SHA256) || seen[binary.Arch] {
+		key := binary.OS + "/" + binary.Arch
+		expectedArchive, known := expected[key]
+		expectedName := "panel"
+		if binary.OS == "windows" {
+			expectedName = "panel.exe"
+		}
+		if !known || binary.Name != expectedName || binary.Size <= 0 || binary.Size > maxBinary || !checksumPattern.MatchString(binary.SHA256) || seen[key] {
 			return errors.New("包内程序的平台、文件名、大小或摘要不符合发行约定")
 		}
 		archive := binary.Archive
-		if archive.Name != "panel-linux-"+binary.Arch+".tar.gz" || archive.Size <= 0 || archive.Size > maxBinary || !checksumPattern.MatchString(archive.SHA256) {
+		if archive.Name != expectedArchive || archive.Size <= 0 || archive.Size > maxBinary || !checksumPattern.MatchString(archive.SHA256) {
 			return errors.New("压缩包名称、大小或摘要不符合发行约定")
 		}
 		if sums[archive.Name] != archive.SHA256 {
 			return errors.New("压缩包摘要与 SHA256SUMS 不一致")
 		}
+		found := false
 		for _, asset := range release.Assets {
-			if asset.Name == archive.Name && asset.Size != archive.Size {
-				return errors.New("压缩包大小与 Release 资源记录不一致")
+			if asset.Name == archive.Name {
+				found = true
+				if asset.Size != archive.Size {
+					return errors.New("压缩包大小与 Release 资源记录不一致")
+				}
 			}
 		}
-		seen[binary.Arch] = true
+		if !found {
+			return errors.New("缺少版本清单声明的压缩包")
+		}
+		seen[key] = true
 	}
 	return nil
 }
@@ -136,7 +177,7 @@ func parseChecksums(data []byte) (map[string]string, error) {
 		}
 		result[name] = fields[0]
 	}
-	if len(result) != 5 {
+	if len(result) != len(legacyAssets)-1 && len(result) != len(assetLimits)-1 {
 		return nil, errors.New("SHA256SUMS 缺少必要文件")
 	}
 	return result, nil

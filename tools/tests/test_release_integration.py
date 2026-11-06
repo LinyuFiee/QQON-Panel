@@ -34,32 +34,34 @@ class ReleaseIntegrationTests(unittest.TestCase):
         # Explicit test-only identity, not a real repository, commit or release.
         with tempfile.TemporaryDirectory(prefix="panel-test-only-release-") as temporary:
             output = Path(temporary) / "assets"
-            manifest = builder.build_release(version="v0.4.0", repository="fixture-owner/fixture-panel",
+            manifest = builder.build_release(version="v0.5.0", repository="fixture-owner/fixture-panel",
                                              commit="a" * 40, build_time="2026-11-06T00:00:00Z",
                                              output=output, go=go)
             installer = installer_module()
             sums = installer.checksums((output / "SHA256SUMS").read_bytes())
             parsed = installer.manifest((output / "release.json").read_bytes(), sums,
-                                        "fixture-owner/fixture-panel", "v0.4.0")
+                                        "fixture-owner/fixture-panel", "v0.5.0")
             self.assertEqual(parsed, manifest)
-            self.assertEqual(manifest["format"], 2)
+            self.assertEqual(manifest["format"], 3)
             self.assertEqual({path.name for path in output.iterdir()}, {
-                "panel-linux-amd64.tar.gz", "panel-linux-arm64.tar.gz", "install.sh", "update.sh",
-                "release.json", "SHA256SUMS",
+                "panel-linux-amd64.tar.gz", "panel-linux-arm64.tar.gz", "panel-windows-amd64.zip",
+                "install.sh", "update.sh", "install.ps1", "update.ps1", "release.json", "SHA256SUMS",
             })
             self.assertEqual(set(sums), set(builder.ASSET_NAMES) - {"SHA256SUMS"})
             for record in manifest["binaries"]:
-                self.assertEqual(record["name"], "panel")
+                self.assertEqual(record["name"], "panel.exe" if record["os"] == "windows" else "panel")
                 self.assertEqual(sums[record["archive"]["name"]], record["archive"]["sha256"])
                 self.assertEqual((output / record["archive"]["name"]).stat().st_size, record["archive"]["size"])
             self.assertEqual((output / "install.sh").read_bytes(), (ROOT / "scripts/install.sh").read_bytes())
             self.assertEqual((output / "update.sh").read_bytes(), installer.WRAPPER)
+            for name in ("install.ps1", "update.ps1"):
+                self.assertEqual((output / name).read_bytes(), (ROOT / "scripts" / name).read_bytes())
             env = os.environ.copy()
             env["PANEL_RELEASE_FIXTURE_DIR"] = str(output)
             subprocess.run([go, "test", "./internal/update", "-run", "^TestPublisherFixtureCompatibility$", "-count=1"],
                            cwd=ROOT, env=env, check=True, timeout=120)
             print(json.dumps({"testOnly": True, "assetCount": len(list(output.iterdir())),
-                              "binarySizes": {record["arch"]: record["size"] for record in manifest["binaries"]},
+                              "binarySizes": {record["os"] + "/" + record["arch"]: record["size"] for record in manifest["binaries"]},
                               "publisherInstallerGoCompatible": True}))
 
 

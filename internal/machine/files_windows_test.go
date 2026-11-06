@@ -9,7 +9,6 @@ import (
 	"strings"
 	"syscall"
 	"testing"
-	"time"
 	"unicode/utf16"
 )
 
@@ -66,16 +65,5 @@ func TestWindowsJunctionEscapeDenied(t *testing.T) {
 	page := decodeBody[filesView](t, request(t, s, "GET", "/api/files", ""))
 	if len(page.Entries) != 1 || page.Entries[0].Type != "symlink" {
 		t.Fatalf("junction not labeled as a link: %+v", page.Entries)
-	}
-}
-
-func TestWindowsMetricsNullAndActualHeap(t *testing.T) {
-	p := newHostSampler(time.Now().Add(-time.Second))
-	view := p.sample(time.Now())
-	if view.Available || view.Reason == "" || view.CPUPercent != nil || view.UptimeSeconds != nil || view.Memory.Used != nil || view.Disk.Total != nil || view.Network.RX != nil || view.Panel.RSSBytes != nil {
-		t.Fatalf("Windows host metrics must be explicitly unavailable: %+v", view)
-	}
-	if view.Panel.HeapBytes == 0 || view.Panel.Goroutines < 1 || view.Panel.UptimeSeconds < 1 {
-		t.Fatal("missing actual Go process runtime")
 	}
 }

@@ -129,7 +129,8 @@ jobs:
                                            repository=os.environ["RELEASE_REPOSITORY"],
                                            commit=os.environ["RELEASE_COMMIT"],
                                            build_time=os.environ["RELEASE_BUILD_TIME"], output=output)
-          record = next(binary for binary in manifest["binaries"] if binary["arch"] == "amd64")
+          record = next(binary for binary in manifest["binaries"]
+                        if binary["os"] == "linux" and binary["arch"] == "amd64")
           # Only this job's trusted local build is run, from a separate private
           # directory after bounded gzip/USTAR/hash/ELF verification. Never tar -xf.
           with tempfile.TemporaryDirectory(prefix="panel-local-build-info-") as temporary:
@@ -152,8 +153,11 @@ jobs:
           path: |
             ${{ runner.temp }}/panel-release-${{ github.run_id }}-${{ github.run_attempt }}/panel-linux-amd64.tar.gz
             ${{ runner.temp }}/panel-release-${{ github.run_id }}-${{ github.run_attempt }}/panel-linux-arm64.tar.gz
+            ${{ runner.temp }}/panel-release-${{ github.run_id }}-${{ github.run_attempt }}/panel-windows-amd64.zip
             ${{ runner.temp }}/panel-release-${{ github.run_id }}-${{ github.run_attempt }}/install.sh
             ${{ runner.temp }}/panel-release-${{ github.run_id }}-${{ github.run_attempt }}/update.sh
+            ${{ runner.temp }}/panel-release-${{ github.run_id }}-${{ github.run_attempt }}/install.ps1
+            ${{ runner.temp }}/panel-release-${{ github.run_id }}-${{ github.run_attempt }}/update.ps1
             ${{ runner.temp }}/panel-release-${{ github.run_id }}-${{ github.run_attempt }}/release.json
             ${{ runner.temp }}/panel-release-${{ github.run_id }}-${{ github.run_attempt }}/SHA256SUMS
           if-no-files-found: error
@@ -161,8 +165,83 @@ jobs:
           retention-days: 7
           compression-level: 0
 
-  publish:
+  windows-test:
     needs: test-build
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.test-build.outputs.commit }}
+          persist-credentials: false
+          submodules: false
+
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          # go.mod requires Go 1.26+ for the pinned x/sys dependency.
+          go-version: stable
+          cache: false
+          check-latest: true
+
+      - name: Windows Go and isolated PowerShell tests
+        env:
+          GOTOOLCHAIN: local
+        run: |
+          set -euo pipefail
+          python -I -m unittest discover -s tools/tests -p 'test_*.py' -v
+          go test ./...
+          go vet ./...
+          powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/windows-tests/test_install.ps1
+          # No Windows race run without a configured CGO compiler. Linux runs it.
+
+      - name: Build and verify this runner's own Windows package
+        env:
+          RELEASE_TAG: ${{ needs.test-build.outputs.tag }}
+          RELEASE_REPOSITORY: ${{ needs.test-build.outputs.repository }}
+          RELEASE_COMMIT: ${{ needs.test-build.outputs.commit }}
+          RELEASE_BUILD_TIME: ${{ needs.test-build.outputs.build_time }}
+        run: |
+          set -euo pipefail
+          python -I - <<'PY'
+          import importlib.util
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+          import subprocess
+          import tempfile
+
+          root = Path(os.environ["GITHUB_WORKSPACE"])
+          spec = importlib.util.spec_from_file_location("panel_build_release", root / "tools/build_release.py")
+          release = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(release)
+          output = Path(os.environ["RUNNER_TEMP"]) / ("panel-windows-build-" + os.environ["GITHUB_RUN_ID"]
+                                                     + "-" + os.environ["GITHUB_RUN_ATTEMPT"])
+          identity = dict(version=os.environ["RELEASE_TAG"], repository=os.environ["RELEASE_REPOSITORY"],
+                          commit=os.environ["RELEASE_COMMIT"], build_time=os.environ["RELEASE_BUILD_TIME"], output=output)
+          release.build_release(**identity, go=shutil.which("go"))
+          manifest = release.verify_release(**identity)
+          record = next(binary for binary in manifest["binaries"]
+                        if binary["os"] == "windows" and binary["arch"] == "amd64")
+          # This job builds from checked-out source; it never executes a downloaded artifact.
+          with tempfile.TemporaryDirectory(prefix="panel-windows-build-info-") as temporary:
+              binary = release.extract_archive(output / record["archive"]["name"], record,
+                                               Path(temporary) / "panel.exe")
+              info = json.loads(subprocess.run([str(binary), "-build-info"], cwd=root,
+                                check=True, capture_output=True, text=True, timeout=15).stdout)
+          expected = {key: manifest[key] for key in ("version", "commit", "buildTime", "repository", "dataSchema")}
+          expected.update(os="windows", arch="amd64")
+          if info != expected:
+              raise SystemExit("Windows amd64 -build-info differs from release.json")
+          PY
+
+  publish:
+    needs: [test-build, windows-test]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -241,8 +320,9 @@ jobs:
           gh release create "$RELEASE_TAG" --repo "$RELEASE_REPOSITORY" \
             --verify-tag --target "$RELEASE_COMMIT" --draft --title "$RELEASE_TAG" --generate-notes
           gh release upload "$RELEASE_TAG" --repo "$RELEASE_REPOSITORY" \
-            "$assets/panel-linux-amd64.tar.gz" "$assets/panel-linux-arm64.tar.gz" \
-            "$assets/install.sh" "$assets/update.sh" "$assets/release.json" "$assets/SHA256SUMS"
+            "$assets/panel-linux-amd64.tar.gz" "$assets/panel-linux-arm64.tar.gz" "$assets/panel-windows-amd64.zip" \
+            "$assets/install.sh" "$assets/update.sh" "$assets/install.ps1" "$assets/update.ps1" \
+            "$assets/release.json" "$assets/SHA256SUMS"
           remote_release="$RUNNER_TEMP/panel-remote-release-$GITHUB_RUN_ATTEMPT.json"
           gh release view "$RELEASE_TAG" --repo "$RELEASE_REPOSITORY" \
             --json tagName,isDraft,assets > "$remote_release"
@@ -254,12 +334,13 @@ jobs:
 
           output, response = map(Path, sys.argv[1:])
           release = json.loads(response.read_text(encoding="utf-8"))
-          names = {"panel-linux-amd64.tar.gz", "panel-linux-arm64.tar.gz", "install.sh", "update.sh", "release.json", "SHA256SUMS"}
+          names = {"panel-linux-amd64.tar.gz", "panel-linux-arm64.tar.gz", "panel-windows-amd64.zip",
+                   "install.sh", "update.sh", "install.ps1", "update.ps1", "release.json", "SHA256SUMS"}
           assets = release.get("assets", [])
           if release.get("tagName") != os.environ["RELEASE_TAG"] or release.get("isDraft") is not True:
               raise SystemExit("expected an unpublished draft for this tag")
           if len(assets) != len(names) or {asset.get("name") for asset in assets} != names:
-              raise SystemExit("draft does not contain exactly the six expected assets")
+              raise SystemExit("draft does not contain exactly the nine expected assets")
           for asset in assets:
               if asset.get("state") != "uploaded" or asset.get("size") != (output / asset["name"]).stat().st_size:
                   raise SystemExit("draft asset upload is incomplete or has the wrong size")

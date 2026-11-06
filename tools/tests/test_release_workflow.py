@@ -62,12 +62,12 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("--draft", publish)
         self.assertNotIn("--clobber", publish)
 
-    def test_exact_six_compressed_assets_and_safe_local_build_info(self):
+    def test_exact_nine_assets_and_safe_local_build_info(self):
         test_build, publish = self.text.split("\n  publish:\n", 1)
-        names = {"panel-linux-amd64.tar.gz", "panel-linux-arm64.tar.gz", "install.sh", "update.sh",
-                 "release.json", "SHA256SUMS"}
+        names = {"panel-linux-amd64.tar.gz", "panel-linux-arm64.tar.gz", "panel-windows-amd64.zip",
+                 "install.sh", "update.sh", "install.ps1", "update.ps1", "release.json", "SHA256SUMS"}
         uploaded = re.findall(r"^            \$\{\{ runner.temp \}\}/[^\n]+/([^/\n]+)$", test_build, re.MULTILINE)
-        self.assertEqual(len(uploaded), 6)
+        self.assertEqual(len(uploaded), 9)
         self.assertEqual(set(uploaded), names)
         self.assertEqual(set(re.findall(r'"\$assets/([^"\n]+)"', publish)), names)
         self.assertNotRegex(self.text, r"panel-linux-(?:amd64|arm64)(?![\w.-])")
@@ -82,13 +82,34 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotRegex(self.text, r"^\s+tar\s", "no unrestricted tar extraction")
         self.assertIn("--verify-only", publish)
 
+    def test_windows_tests_gate_publication_and_use_own_build(self):
+        linux, following = self.text.split("\n  windows-test:\n", 1)
+        windows, publish = following.split("\n  publish:\n", 1)
+        self.assertIn("needs: [test-build, windows-test]", publish)
+        self.assertIn("runs-on: windows-latest", windows)
+        self.assertIn("contents: read", windows)
+        for command in ("go test ./...", "go vet ./...", "python -I -m unittest discover -s tools/tests",
+                        "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/windows-tests/test_install.ps1"):
+            self.assertIn(command, windows)
+        self.assertNotIn("go test -race", windows)
+        self.assertIn("go test -race", linux)
+        self.assertIn('binary["os"] == "linux"', linux)
+        self.assertIn('binary["os"] == "windows"', windows)
+        self.assertIn('Path(temporary) / "panel.exe"', windows)
+        self.assertIn("release.build_release(", windows)
+        self.assertLess(windows.index("release.build_release("), windows.index("release.verify_release("))
+        self.assertLess(windows.index("release.verify_release("), windows.index("release.extract_archive("))
+        self.assertLess(windows.index("release.extract_archive("), windows.index('[str(binary), "-build-info"]'))
+        self.assertNotIn("actions/download-artifact", windows)
+        self.assertNotIn("GH_TOKEN", windows)
+
     def test_embedded_python_compiles(self):
         snippets = 0
         for script in self.scripts:
-            for match in re.finditer(r"^[^\n]*python3 -I [^\n]*<<'PY'\n(.*?)^PY$", script, re.MULTILINE | re.DOTALL):
+            for match in re.finditer(r"^[^\n]*python(?:3)? -I [^\n]*<<'PY'\n(.*?)^PY$", script, re.MULTILINE | re.DOTALL):
                 compile(match.group(1), str(WORKFLOW), "exec")
                 snippets += 1
-        self.assertEqual(snippets, 4)
+        self.assertEqual(snippets, 5)
 
     def test_embedded_shell_parses_without_executing(self):
         bash = shutil.which("bash")

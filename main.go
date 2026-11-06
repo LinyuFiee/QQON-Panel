@@ -13,18 +13,17 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"strings"
-	"syscall"
 	"time"
 
 	"panel/internal/auth"
 	"panel/internal/buildinfo"
 	"panel/internal/lock"
 	"panel/internal/machine"
+	"panel/internal/platform"
 	"panel/internal/server"
 	"panel/internal/sources"
 	"panel/internal/update"
@@ -34,20 +33,20 @@ import (
 var assets embed.FS
 
 var (
-	version          = "0.4.0"
+	version          = "0.5.0"
 	commit           = "unknown"
 	buildTime        = "unknown"
 	githubRepository = "LinyuFiee/QQON-Panel"
 )
 
 func main() {
-	if err := run(); err != nil {
+	if err := platform.Run("QQONPanel", run); err != nil {
 		log.Printf("panel: %v", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+func run(parent context.Context, ready func()) error {
 	defaultData := ""
 	if userConfig, err := os.UserConfigDir(); err == nil {
 		defaultData = filepath.Join(userConfig, "server-panel")
@@ -147,15 +146,8 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(absoluteData, 0700); err != nil {
-		return fmt.Errorf("create data directory: %w", err)
-	}
-	info, err := os.Lstat(absoluteData)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("data directory must be a real private directory, not a symbolic link")
-	}
-	if runtime.GOOS != "windows" && info.Mode().Perm()&0077 != 0 {
-		return errors.New("data directory permissions must be owner-only (chmod 700)")
+	if err := platform.PreparePrivateDirectory(absoluteData); err != nil {
+		return fmt.Errorf("prepare private data directory: %w", err)
 	}
 	if *fileRoot != "" {
 		root, err := filepath.EvalSymlinks(*fileRoot)
@@ -232,7 +224,7 @@ func run() error {
 	// HTTP/1.1 keeps the connection/request budget explicit for this small panel.
 	httpServer.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}}
 	httpServer.TLSNextProto = map[string]func(*http.Server, *tls.Conn, http.Handler){}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := context.WithCancel(parent)
 	defer stop()
 	shutdownDone := make(chan struct{})
 	go func() {
@@ -249,10 +241,13 @@ func run() error {
 		log.Printf("first-time setup required; read the private bootstrap token locally from: %s", tokenPath)
 	}
 	if runtime.GOOS != "linux" {
-		log.Print("development platform: Linux host metrics and system services are unavailable")
+		log.Print("Linux systemd service queries and Docker Unix sockets are unavailable on this platform")
 	}
 	if *dockerSocket != "" {
 		log.Printf("Docker socket explicitly configured; writes enabled: %t (socket grants host-level authority)", *allowWrites)
+	}
+	if ready != nil {
+		ready()
 	}
 	if directTLS {
 		err = httpServer.ServeTLS(listener, *certPath, *keyPath)
