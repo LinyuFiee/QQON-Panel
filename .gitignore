@@ -17,6 +17,7 @@
 /IMPLEMENTATION.md
 /UPDATE_CONTRACT.md
 /ARCHIVE_CONTRACT.md
+/MULTIPLATFORM_CONTRACT.md
 /tools/prepare_go.py
 /tools/local_smoke.py
 
@@ -24,6 +25,11 @@
 /bin/
 /dist/
 /release-output/
+/docs/node_modules/
+/docs/.vitepress/cache/
+/docs/.vitepress/dist/
+/docs/public/install.sh
+/docs/public/install.ps1
 *.exe
 *.test
 *.out

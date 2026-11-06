@@ -1,0 +1,5 @@
+node_modules/
+.vitepress/cache/
+.vitepress/dist/
+public/install.sh
+public/install.ps1

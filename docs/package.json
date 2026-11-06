@@ -1,0 +1,22 @@
+{
+  "name": "qqon-panel-docs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "sync:installers": "node .vitepress/sync-installers.mjs",
+    "predev": "npm run sync:installers",
+    "dev": "vitepress dev . --host 127.0.0.1",
+    "prebuild": "npm run sync:installers",
+    "build": "vitepress build .",
+    "postbuild": "npm run check:links",
+    "preview": "vitepress preview . --host 127.0.0.1",
+    "check:links": "node .vitepress/check-links.mjs"
+  },
+  "devDependencies": {
+    "vitepress": "1.6.4"
+  }
+}
