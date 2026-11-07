@@ -33,7 +33,7 @@ export default defineConfig({
         items: [
           { text: '快速开始', link: '/guide/quickstart' },
           { text: '支持矩阵与验证状态', link: '/guide/support-matrix' },
-          { text: '已发布安装（v0.5.0）', link: '/guide/installation' },
+          { text: '已发布安装（v0.6.0）', link: '/guide/installation' },
           { text: '旧版 v0.4.0 安装', link: '/guide/legacy-v0-4' }
         ]
       },
@@ -42,8 +42,8 @@ export default defineConfig({
         items: [
           { text: '安全边界', link: '/guide/security' },
           { text: 'Windows 服务', link: '/guide/windows-services' },
-          { text: 'qqon 维护（v0.6 待发布）', link: '/guide/maintenance' },
-          { text: '公网 IP HTTPS（v0.6 待发布）', link: '/guide/public-https' },
+          { text: 'qqon 维护', link: '/guide/maintenance' },
+          { text: '公网 IP HTTPS', link: '/guide/public-https' },
           { text: '升级与迁移', link: '/guide/upgrade-migration' },
           { text: '故障排查', link: '/guide/troubleshooting' }
         ]

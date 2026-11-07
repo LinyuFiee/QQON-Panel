@@ -4,11 +4,11 @@
 
 [文档](https://linyufiee.github.io/QQON-Panel/) · [下载](https://github.com/LinyuFiee/QQON-Panel/releases/latest) · [发布指南](RELEASING.md)
 
-> **[v0.5.0 正式版](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.5.0) 已发布**：交互一键安装、APT/DNF 适配和 Windows x64 原生产物。选择系统，执行下方命令后按终端提示操作。
->
-> **v0.6 开发中**：中文安装、默认公网 IP＋HTTPS、自签证书管理及统一 `qqon` 维护。当前已发布 v0.5 仍只配置本机／HTTPS 代理，不会凭空获得公网入口；新增能力须等待下一 Release。详见[公网 HTTPS](https://linyufiee.github.io/QQON-Panel/guide/public-https)与[维护命令](https://linyufiee.github.io/QQON-Panel/guide/maintenance)。
+> **[v0.6.0 正式版](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.6.0) 已发布**：中文安装向导、默认公网 IPv4 自签 HTTPS、四种访问模式与统一 `qqon` 维护。选择系统，执行下方命令后按提示操作。
 
-## 一键交互安装 · v0.5.0
+<a id="一键交互安装--v050"></a>
+
+## 一键交互安装 · v0.6.0
 
 **Linux：在 root 终端执行**
 
@@ -22,21 +22,23 @@ curl -fsSL https://linyufiee.github.io/QQON-Panel/install.sh | bash
 irm https://linyufiee.github.io/QQON-Panel/install.ps1 | iex
 ```
 
-复制一条命令后，在终端选择安装、升级或查看状态；首次可选择端口和本机／HTTPS 代理访问方式。仓库已内置，不必填写 `owner/repo`。
+中文向导默认 `public-selfsigned`：确认自己的公网 IPv4，使用 HTTPS `8443`；也可选择仅本机、已有 HTTPS 代理或导入证书。仓库已内置，不必填写 `owner/repo`。安装后运行 `qqon` 打开中文维护菜单。
 
-这些命令会执行本项目维护的引导代码，请确认域名和仓库来源。引导器把校验后的安装器下载到受保护的临时位置再运行，交互从终端读取。Linux 起始命令仍需 curl；只有 wget 的系统及不使用管道的审阅安装方式见[快速开始](https://linyufiee.github.io/QQON-Panel/guide/quickstart)。
+自签证书会有浏览器警告，请与可信终端显示的 SHA-256 指纹核对。安装结果中的公网链接只是配置结果，**未检测外网可达性**；云安全组、防火墙和 NAT 需人工配置。详见[公网 HTTPS](https://linyufiee.github.io/QQON-Panel/guide/public-https)与[维护命令](https://linyufiee.github.io/QQON-Panel/guide/maintenance)。
 
-**旧版 v0.4.0**：[固定版本安装说明](https://linyufiee.github.io/QQON-Panel/guide/legacy-v0-4)。迁移到 v0.5.0 需明确确认更换管理器，不会覆盖账号或悄悄替换已发布文件。
+这些命令会执行本项目维护的引导代码，请确认域名和仓库来源。引导器把校验后的安装器下载到受保护的临时位置再运行，交互从终端读取。Linux 起始命令仍需 curl；只有 wget 的系统及不使用管道的审阅安装方式见[安装说明](https://linyufiee.github.io/QQON-Panel/guide/installation)。
+
+**旧版 v0.4 / v0.5** 保留原回环／代理访问。升级 v0.6.0 须显式迁移已知管理器、再升级程序，之后才可通过 `qqon config` 选择公网模式；不自动开放旧安装或覆盖账号。[v0.4 固定版本说明](https://linyufiee.github.io/QQON-Panel/guide/legacy-v0-4) · [迁移说明](https://linyufiee.github.io/QQON-Panel/guide/upgrade-migration)
 
 ## 支持范围
 
-| 系统 | 架构 | v0.5.0 已发布范围 |
+| 系统 | 架构 | v0.6.0 已发布范围 |
 | --- | --- | --- |
 | Debian 12/13、Ubuntu 22.04/24.04 | amd64 / arm64 | APT、systemd、Linux 指标 |
 | Rocky Linux 9/10、AlmaLinux 9/10 | amd64 / arm64 | DNF、systemd、CA 与账号工具适配 |
 | Windows Server 2019/2022/2025、Windows 10/11 | x64 | 原生 SCM 服务、NTFS 权限、Windows 指标 |
 
-[发布 CI #42328127375](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42328127375) 的 `test-build`、`windows-test`、`publish` 均成功。具体系统安装、真实 SCM、SELinux 与物理故障恢复仍未验证，详见[支持矩阵](https://linyufiee.github.io/QQON-Panel/guide/support-matrix)。Windows Docker 暂不开放；非 systemd 容器和停止维护的 Linux 版本不在首轮范围内。
+[发布 CI #42349315659](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42349315659) 的 `test-build`、`windows-test`、`publish` 均成功，包含新增 Windows maintenance 隔离测试。具体系统安装、真实 SCM、SELinux 与物理故障恢复仍未验证，详见[支持矩阵](https://linyufiee.github.io/QQON-Panel/guide/support-matrix)。Windows Docker 暂不开放；非 systemd 容器和停止维护的 Linux 版本不在首轮范围内。
 
 ## 功能
 
@@ -45,9 +47,9 @@ irm https://linyufiee.github.io/QQON-Panel/install.ps1 | iex
 - **文件**：授权根目录内只读浏览／文本预览，限制路径、大小和特殊文件。
 - **Linux 服务与 Docker**：白名单 systemd 状态、显式 Unix socket、受控容器操作。
 - **应用源**：APT／Docker CE／Registry 分开配置；不冒充已经安装业务软件。
-- **版本更新**：手动检查 GitHub Release，管理员终端升级，校验、备份、回退与中断恢复。
+- **版本更新与维护**：手动检查 Release，管理员通过 `qqon` 查看状态、管理固定服务、升级、备份、配置与自签证书续期（`qqon tls renew`）。
 
-网站部署、Compose、应用商店、文件编辑、终端、数据库管理和自动证书尚未实现。真实数据缺失时显示不可用，不填充模拟状态。
+网站部署、Compose、应用商店、文件编辑、终端、数据库管理和自动申请公共 CA 证书尚未实现。真实数据缺失时显示不可用，不填充模拟状态。
 
 ## 轻量与安全
 
@@ -55,7 +57,7 @@ irm https://linyufiee.github.io/QQON-Panel/install.ps1 | iex
 - 共享周期采样、有界历史、有限请求与连接数；登录派生、任务队列、日志和文件输出均设上限。
 - Linux 仅补齐缺失的必要依赖，不整机升级、不改源、不关闭 SELinux、不强装数据库／Docker。
 - Windows 原生服务，不依赖 WSL 或 Docker Desktop；安装器以管理员运行，面板使用受限服务身份。
-- 默认回环监听，没有默认管理员密码；公网访问应使用独立 HTTPS 来源。初始化令牌、TOTP 和备份必须保持私有。
+- 新装默认公网 IP 自签 HTTPS，须确认地址和证书指纹；旧版迁移保留原访问。没有默认管理员密码，初始化令牌、TOTP、证书私钥和备份必须保持私有。
 - 压缩包与内层程序分别验证 SHA-256、大小、架构和版本，解压拒绝链接、特殊文件、额外成员和超限内容。
 - 更新不通过网页提权，不重置账户。SHA-256 校验不等同独立发布签名，仍须保护 GitHub 发布权限。
 

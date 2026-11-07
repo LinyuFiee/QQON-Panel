@@ -2,30 +2,35 @@
 
 仓库：[LinyuFiee/QQON-Panel](https://github.com/LinyuFiee/QQON-Panel) · 文档：[GitHub Pages](https://linyufiee.github.io/QQON-Panel/)
 
-## 当前发行：v0.5.0
+<a id="当前发行v050"></a>
 
-- [v0.5.0 正式 Release](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.5.0) 已发布，正式 tag 指向 `07e3665b582ce68198704fa38180e15f135167d6`。
-- [发布 CI #42328127375](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42328127375) 的 `test-build`、`windows-test`、`publish` 均为 `success`。
-- 九个附件重新下载后通过 `verify-only`；Windows bootstrap 只读 `Get-QPReleaseMetadata` 检查 v0.5.0 通过，本地面板版本检查为 `state=up_to_date`、`assetsReady=true`。
+## 当前发行：v0.6.0
 
-这些是发布、产物与只读检查证据，不是逐系统安装或真实 SCM 验收；APT/DNF、SELinux、真实服务权限和物理故障恢复仍需专用测试环境。
+- 当前稳定版／`latest` 为 [v0.6.0 正式 Release](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.6.0)，正式 tag 指向 `3cfd1a8fe75eca46fd1d991749c1be39f546638c`。
+- [发布 CI #42349315659](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42349315659) 的 `test-build`、`windows-test`、`publish` 均为 `success`。
+- Windows 新增 maintenance 隔离测试已在本次 CI 通过，不是宿主真实服务安装测试。
+- 面板更新检查显示当前 v0.6.0、`state=up_to_date`、`assetsReady=true`；Windows bootstrap 真实 format3 三平台元数据检查通过，Pages 两个 bootstrap HTTPS 200 且摘要与源码一致。
 
-## v0.6 开发中：访问配置与维护
+发布与 CI 成功不是逐系统安装或真实 SCM 验收；APT/DNF、SELinux、真实服务权限和物理故障恢复仍需专用测试环境。v0.5.0 的下载复核与只读检查保留为旧版记录，见文档发布页，不移作 v0.6.0 验收证据。
 
-本轮源码增加中文安装、公网 IP HTTPS、自签证书管理、运行日志和 `qqon` 快捷维护，尚未替换公开 v0.5.0。发行协议保持 format3 九资产、用户数据格式仍为1；安装管理记录升级为 format2，不能与发行清单格式混淆。
+<a id="v06-开发中访问配置与维护"></a>
 
-- 已知旧管理器迁移保留原本机／代理访问；不要在迁移时自动开放公网。
-- 证书生成与续期使用新目录，记录证书指纹和有效期；安装器和程序均检查主机名，不通过忽略 TLS 验证使探针成功。
-- 自签证书有浏览器信任提示。完成提示中的 URL 是配置结果，不是云安全组、防火墙和 NAT 的外部验收。
-- `qqon` 包装器由已审核安装器生成，不新增远程执行来源或改变九资产列表。
-- 本地验证增加证书 CLI、HTTPS 信任／错误证书拒绝、有限日志、维护操作与迁移测试。下一版需重新确认提交后发布，v0.5.0 文件保持不变。
+## v0.6.0：访问配置与维护
+
+已发布中文安装、公网 IP HTTPS、自签证书管理、运行日志和 `qqon` 快捷维护。新装默认 `public-selfsigned`（用户确认公网 IPv4、HTTPS `8443`），也可选择仅本机、已有 HTTPS 代理或导入证书。发行协议保持 format3 九资产、用户数据格式仍为1；安装管理记录为 format2，不能与发行清单格式混淆。
+
+- 已知 v0.4/v0.5 管理器须显式迁移，保留原本机／代理访问；先升级程序，再通过 `qqon config` 选择公网，不能在迁移时自动开放公网。
+- 证书生成与 `qqon tls renew` 使用新目录，记录证书指纹和有效期；安装器和程序均检查主机名，不通过忽略 TLS 验证使探针成功。
+- 自签证书有浏览器信任提示，须核对可信终端的 SHA-256 指纹。完成提示中的 URL 是配置结果，外网连通性未检测；云安全组、防火墙和 NAT 需人工配置。
+- `qqon` 包装器由已审核安装器生成，只维护固定面板服务，不新增远程执行来源、任意管理员命令能力或发布资产。
+- 备份先停服取得一致副本，包含账号和证书等敏感数据；配置和换证采用事务。旧 v0.4/v0.5 文件与既有访问不因新版本发布而被覆盖。
 
 ## 文档与程序分开发布
 
 - `main` 上的文档和一键引导变更触发 `.github/workflows/docs.yml`，只发布静态站点。
 - 程序 Release 由稳定标签 `vMAJOR.MINOR.PATCH` 触发 `.github/workflows/release.yml`。
 - 文档可以先于 Release 更新，但必须显著标记尚未发布的能力。不要把没有发行文件的一键入口写成已经可安装。
-- 当前已发布 v0.5.0 使用 format3、多平台九资产；旧版 v0.4.0 保留 format2、Linux 六资产。不要替换或移动已经公开的旧版本。
+- 当前 v0.6.0 与旧 v0.5.0 使用 format3、多平台九资产；旧版 v0.4.0 保留 format2、Linux 六资产。不要替换或移动已经公开的旧版本。
 
 ## 发版前检查
 
@@ -42,6 +47,7 @@ Windows 还需原生 PowerShell 隔离测试：
 
 ```powershell
 powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/windows-tests/test_install.ps1
+powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/windows-tests/test_maintenance.ps1 -PanelBinary C:\path\to\verified-test-panel.exe
 ```
 
 执行策略仅对测试进程生效，不修改系统全局策略。真实服务注册、管理员 ACL、APT/DNF、SELinux、Windows Server 版本和物理故障恢复仍需专门测试环境，不能只看跨编译成功。
@@ -50,7 +56,7 @@ powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/wind
 
 ## 创建发行
 
-仅在另行确认下一版本、提交与变更说明后，设置实际稳定版本号 `VERSION` 再创建新标签。已发布的 `v0.5.0` 不要重打或移动：
+仅在另行确认下一版本、提交与变更说明后，设置实际稳定版本号 `VERSION` 再创建新标签。已发布的 v0.4.0、v0.5.0、v0.6.0 不要重打或移动：
 
 ```sh
 git tag -a "$VERSION" -m "QQON-Panel $VERSION"
@@ -77,13 +83,13 @@ Actions 将验证标签身份，运行 Linux 测试／vet／race、Windows Go �
 
 ## 本地打包
 
-需要 Go 1.26+、Python 3，使用实际完整 commit：
+需要 Go 1.26+、Python 3，使用实际完整 commit 与构建时间；以下在已设置 `BUILD_TIME` 后用于独立新目录，不覆盖正式 Release：
 
 ```sh
 python3 -I tools/build_release.py \
-  --version v0.5.0 --repo LinyuFiee/QQON-Panel \
-  --commit FULL_LOWERCASE_COMMIT_SHA \
-  --build-time 2026-11-07T00:00:00Z \
+  --version v0.6.0 --repo LinyuFiee/QQON-Panel \
+  --commit 3cfd1a8fe75eca46fd1d991749c1be39f546638c \
+  --build-time "$BUILD_TIME" \
   --output /absolute/existing-parent/new-release-directory
 ```
 
@@ -91,8 +97,8 @@ python3 -I tools/build_release.py \
 
 ```sh
 python3 -I tools/build_release.py --verify-only \
-  --version v0.5.0 --repo LinyuFiee/QQON-Panel \
-  --commit FULL_LOWERCASE_COMMIT_SHA \
+  --version v0.6.0 --repo LinyuFiee/QQON-Panel \
+  --commit 3cfd1a8fe75eca46fd1d991749c1be39f546638c \
   --output /absolute/release-directory
 ```
 
@@ -100,9 +106,9 @@ python3 -I tools/build_release.py --verify-only \
 
 ## 旧管理器迁移
 
-v0.4.0 的更新器不认识新九资产协议。新交互安装器只允许已核实官方旧管理器，经终端单独确认后备份并迁移管理器；账户数据不变，未完成的事务先恢复。未知手动安装／改写过的管理器拒绝接管，不能通过改摘要、删锁或重置账户来绕过。
+v0.4.0 的更新器不认识九资产协议；v0.5.0 的旧管理器不因此自动获得 v0.6 访问配置和维护入口。新安装器只允许已识别官方旧管理器，经终端单独确认后备份并迁移；账户数据、原服务身份和访问方式不变，未完成事务先恢复。未知手动安装／改写过的管理器拒绝接管，不能通过改摘要、删锁或重置账户来绕过。
 
-迁移成功后应用升级是单独操作，失败可恢复旧管理器和安装记录。详见文档的升级与迁移页。
+迁移成功后应用升级是单独操作；先确认新程序在旧访问方式下健康，再显式配置公网。详见文档的升级与迁移页。
 
 ## 信任与失败
 
