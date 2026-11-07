@@ -1,7 +1,7 @@
-# v0.7 托管预览开发指南
+# v0.7.0 预览版托管指南
 
-::: warning 尚未发布；有限验证不等于全平台验收
-本页描述 **v0.7 预览开发中的**最高系统权限、Linux 软件安装、真实网站和任务流程，不是已上线功能或发行承诺。已有特定提交的 Ubuntu 真实托管 CI、Windows 本机隔离测试等[有限验证记录](#verification)，尚非全平台验收。当前公开下载仍为 [v0.6.0 预览版](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.6.0)，[当前安装说明](./installation)不包含本页新接口；不要构造 v0.7 下载链接，或拿当前 v0.6 安装器尝试新参数。
+::: warning 预览能力与验证边界
+本页适用于 **[v0.7.0 预览版](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.7.0)** 的最高系统权限、Linux 软件安装、真实网站和任务流程。程序已发布，但有限 CI／隔离测试不等于稳定成熟或全平台验收，详见 [验证记录](#verification)。新装用 [安装说明](./installation)，旧安装先迁移已校验的 v0.7.0 管理器再升级程序；不要把新参数直接交给旧安装器。
 
 **v0.4.0／v0.5.0／v0.6.0 没有真实业务软件安装和网站创建／部署能力。** 这些已发布版本的“应用与源”配置／模板不能当作软件已安装或网站已上线。
 :::
@@ -18,7 +18,7 @@
 
 ### 独立同意与命令边界
 
-以下为本轮未发布开发接口，需匹配的程序与管理器。Linux、Windows 的命令形态已确认，但验证层次不同：Ubuntu 真实托管 CI 只覆盖[列出的场景](#verification)，Windows 本机 57 项及后续 CI 中的同组测试仍采用 TEMP/mock ACL/SCM，不是真实 LocalSystem／SCM 安装验收。这不是给当前 v0.6 下载追加参数的教程。
+以下接口需匹配的 v0.7.0 程序与管理器。Linux／Windows 命令和平台能力不同：Ubuntu 真实托管 CI 仅覆盖列出的场景；Windows 本机及阶段 CI 的 57 项仍是 TEMP/mock ACL/SCM，不是真实 LocalSystem／SCM 安装验收。
 
 | 场景 | 专用接口 | 不能替代的同意 |
 | --- | --- | --- |
@@ -27,9 +27,9 @@
 | 已有受管理安装 | 新维护入口 `qqon privilege`；Windows 管理器对应 `-Maintenance privilege` | `qqon update`、普通升级、访问配置或换证均不授权 |
 | 交互同意 | 专用最高权限提示后输入 **`同意最高权限`** | 普通 `y`／`yes` 不等价；拒绝时保持受限模式 |
 
-旧安装不得因升级自动提权。Linux 已知官方 v0.4/v0.5/v0.6 的开发流程是：**先独立迁移管理器 → `sudo qqon update` 到不低于 v0.7.0 的匹配程序、仍保持 restricted → `sudo qqon privilege` 单独授权**。全程保留原访问和账号，先确认新程序在原配置和受限身份下健康。当前没有对应的公开 v0.7 发行可供升级，此处不是可在旧业务机执行的上线教程。
+旧安装不得因升级自动提权。Linux 已知官方 v0.4/v0.5/v0.6 的顺序是：**先校验并显式迁移 v0.7.0 管理器 → `sudo qqon update` 到 v0.7.0、保持 restricted 并确认健康 → 如需 root 再 `sudo qqon privilege` 单独授权**。保留原访问和账号；先备份，未知或改写管理器不接管。
 
-#### Linux 已确认命令（仅匹配的预览开发环境）
+#### Linux v0.7.0 命令
 
 已有受管理安装完成上述管理器迁移与程序升级后，可二选一：
 
@@ -43,26 +43,26 @@ sudo qqon privilege --accept-system-management --yes
 
 语法为 `sudo qqon privilege [--accept-system-management] [--yes]`，方括号表示可选项，不要原样输入。独立的 `--accept-system-management` 才是非交互同意；`sudo qqon privilege --yes` 单独使用不授权。当前已是 root 时可省略 `sudo`。
 
-仅对**新安装**，使用已审阅的本地开发安装器，并已具备经过验证、版本不低于 v0.7.0 的匹配程序来源时，可采用仅本机模式：
+仅对**新安装**，先从 v0.7.0 Release 获取、校验并审阅 `install.sh`，再选择仅本机模式和独立授权：
 
 ```sh
-sudo bash install.sh --mode local --yes --accept-system-management
+sudo bash install.sh --version v0.7.0 --mode local --yes --accept-system-management
 ```
 
-这里的 `install.sh` 必须是已审阅的匹配开发安装器，不是当前 Pages 下载的 v0.6 管理器；命令不创建或获取一个不存在的 v0.7 Release。若实际解析到当前已发布 v0.6，最高权限请求会因程序版本不足而拒绝；当前公开版本只能受限安装。
+这里使用完整的 v0.7.0 Release 安装器，不混用旧版本或不明分支脚本。若实际程序版本低于 v0.7.0，最高权限请求会拒绝；旧版本只能受限运行。
 
 - `--accept-system-management` 只允许新安装或独立的 `qqon privilege`；已有安装不能靠重复安装获得授权。
 - 普通 `--upgrade`、`--update`、`--status`、`--migrate-manager` 与授权标志组合均拒绝；`qqon update/status` 也不能附带授权标志。
-- Linux 开发 bootstrap 已识别安装器 **protocol 5** 并转发参数；这只是协议兼容性，不代表 v0.7 已发布或线上 Pages 已部署该开发入口。固定已发布 v0.6 安装器仍保留受限行为。
+- Linux bootstrap 识别 v0.7.0 安装器 **protocol 5** 并转发参数；旧 v0.6 安装器与旧产物保持不变，不因新入口发布自动获得最高权限。
 - 安装器 protocol 5、安装管理记录 format3、发行清单 format3 和用户数据 schema 1 各有独立含义，不可互换。
 
-#### Windows 已确认命令（仅匹配的预览开发环境）
+#### Windows v0.7.0 命令
 
 在管理员 PowerShell 中，新管理器／程序已就绪后，可运行 `qqon privilege` 并按提示输入 `同意最高权限`，或在已阅读告知后运行 `qqon privilege --accept-system-management --yes`。Windows 包装入口接受双横线参数，直接调用安装器则用 `-Maintenance privilege -AcceptSystemManagement -Yes`，不要混写两种语法。
 
 完整的带引号 PowerShell 路径调用、新装 `-Action Install -Version v0.7.0 -AccessMode local -Port 8443 -AcceptSystemManagement -Yes` 示例见 [Windows 服务命令](./windows-services#privilege-commands)。已知 Windows v0.5/v0.6 管理器先通过已校验的 v0.7 脚本 `-Action Migrate -Version v0.7.0 -MigrateLegacy -Yes` 独立迁移，再 `qqon update`、确认受限程序健康，最后单独 privilege；**无 Windows v0.4 支持**。`-MigrateLegacy` 同意的是管理器迁移，不是 LocalSystem 授权。
 
-这些命令已在本机隔离环境验证，后续合并 CI 的同组 57 项也已通过；两者都不代表真实 LocalSystem／SCM 安装。当前公共下载仍为 v0.6，不能从不存在的 v0.7 Release 下载安装。
+这些命令适用于已发布的匹配 v0.7.0 安装；本机和阶段 CI 隔离测试通过不代表真实 LocalSystem／SCM 安装验收。
 
 未完成事务先恢复；未知或被修改的管理器不能强制接管。具体顺序见 [升级与迁移](./upgrade-migration#privilege-migration)。
 
@@ -75,7 +75,7 @@ sudo bash install.sh --mode local --yes --accept-system-management
 - 程序同时检查记录、路径／所有权或 ACL 和**实际 root／LocalSystem 身份**。只有 root 身份、只有记录、或旧记录残留均不足以授权。
 - 网页只读显示管理状态（`GET /api/management` 的 `authorized`、`mode`、`identity`、`reason` 等），没有网页授权按钮或写入同意记录的 API；`authorized=true` 也不能越过 Windows 平台限制。
 
-v0.7 开发中的**安装管理记录**为 format3，新增 `privilegeMode`／`privilegeConsent`；旧 format1/2 默认为 restricted，普通升级锁定权限字段。这不是发行清单 format3 或用户数据 schema 1 的变更。
+v0.7.0 的**安装管理记录**为 format3，新增 `privilegeMode`／`privilegeConsent`；旧 format1/2 默认为 restricted，普通升级锁定权限字段。这不是发行清单 format3 或用户数据 schema 1 的变更。
 
 ## Linux 真实软件流程 {#apps}
 
@@ -165,11 +165,11 @@ v0.7 开发中的**安装管理记录**为 format3，新增 `privilegeMode`／`p
 - **工作负载**：Nginx、PHP-FPM worker、MariaDB、Redis、代理 upstream 与用户程序分别占用内存，不计入面板进程自身指标。
 - **主机总量**：包含面板、业务、操作系统及缓存；装更多软件、增大 worker／数据库缓存会减少可用内存。
 
-“轻量面板”不是“整套网站和数据库几乎不占 RAM”。前一次提交 `80fea3b505bc429541ba31ed2f1ac751debaaf9e` 对应 Ubuntu CI 的**5 次操作后短时采样**中，面板进程 RSS 中位数与最大值均为 **15.42 MiB**；不移作后续合并 CI 的测量。这是指定操作场景下的面板数据，不含 Nginx／PHP／数据库等业务进程，不是 SLA、soak 长时间运行测试、全套负载上限或所有平台资源保证。仍须在实际并发与数据负载下分别测量面板／业务／主机内存。
+“轻量面板”不是“整套网站和数据库几乎不占 RAM”。各 5 次操作后短时 process RSS 采样：`80fea3b505bc429541ba31ed2f1ac751debaaf9e`／CI42379665605 中位数＝最大值 **15.42 MiB**；`fa1483f9ec57294d000a6f71014c4e6ee7afe87c`／CI42380757509 中位数 **15.51 MiB**、最大值 **15.52 MiB**。两次记录独立，不含业务 RAM，也不是发行标签新测量、SLA、soak 或全负载保证。实际并发与数据负载仍须分别测量面板／业务／主机。
 
 ## 当前验收与非目标 {#verification}
 
-**v0.7 仍未发布，以下有限结果不构成全平台验收。** 最新全合并代码 [CI #42380757509](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42380757509) 已成功，提交 `fa1483f9ec57294d000a6f71014c4e6ee7afe87c`；Linux unit／race／真实托管及 Windows Go＋57 项 PowerShell 全部成功，Windows 仍非真实 SCM／LocalSystem 安装；下节保留此前 `80fea3b…` 的独立场景与 RSS 记录。
+**v0.7.0 已发布，以下验证仍有明确范围。** [发布 CI42383705774](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42383705774) 对应发行提交 `5d668b229ae57055cb7667e996e50e58c116abba`，三个任务成功并公开 Release；[主程序阶段 CI42380757509](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42380757509) 对应 `fa1483f9ec57294d000a6f71014c4e6ee7afe87c`，Linux unit／race／真实托管与 Windows Go＋57PS 成功。两类 CI 不混作同一提交的实机验收，Windows 仍非真实 SCM／LocalSystem 安装；下节保留更早 `80fea3b…` 的独立场景。
 
 ### Ubuntu 真实托管 CI
 

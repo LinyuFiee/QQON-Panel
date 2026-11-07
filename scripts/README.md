@@ -2,118 +2,97 @@
 
 完整中文文档：**https://linyufiee.github.io/QQON-Panel/**
 
-> **[v0.6.0 预览版已发布](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.6.0)**，当前 `latest` 提供 Linux / Windows 中文安装与 `qqon` 维护。v0.4／v0.5／v0.6 均为预览版，尚无真实业务软件安装和网站部署；标签、产物和既有访问方式保持不变。
+**[v0.7.0 预览版已发布](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.7.0)**，当前 `latest` 为 v0.7.0。提供中文安装、`qqon` 维护、独立系统管理授权与 Linux 软件／网站流程。旧 v0.4／v0.5／v0.6 均为预览版，没有真实业务软件安装与建站；旧标签、资产及历史行为不改写。
 
-## v0.7 开发预览：独立最高权限授权
+## 一行交互安装
 
-当前源码新增真实 Linux 软件安装与建站，但 **v0.7.0 尚未发布**；上述一键入口仍下载 v0.6.0，不会提前获得新功能。开发接口、测试和平台边界见 [托管指南](../docs/guide/hosting.md)。
-
-- 新安装可在专门告知后输入 `同意最高权限`；无人值守需单独的 `--accept-system-management`。普通 `--yes` 和升级均不授权。
-- Linux 完整管理模式为 root，受限模式保留原 `server-panel` 身份。已有安装先迁移已核实的官方管理器，再升级程序到 ≥v0.7.0（仍保持受限），最后通过 `sudo qqon privilege` 单独备份和迁移。
-- 授权模式写入安装记录 format3，固定授权文件为 `/etc/server-panel/management-consent.json`，root 所有、0644。程序独立检查实际身份及记录，网页没有授权或任意 shell 接口。
-- Windows 采用独立 LocalSystem 同意／迁移；Linux 业务软件和 Nginx 网站操作不伪装成 Windows 能力。
-- 完整管理模式保留 Go 内存软限制、请求／任务／日志上限和较低 CPU/IO 权重；不再把包管理子进程放在旧 128 MiB cgroup 硬上限里。面板、包管理器和业务服务的内存分别衡量。
-- 新程序自身不安装 Nginx/PHP/数据库。软件页按需安装后查看真实运行状态，未运行时另行点击启动；不承诺修改开机启用策略。
-
-以下为已发布 v0.6.0 预览版的安装和维护行为。
-
-<a id="v06-开发中中文公网与快捷维护"></a>
-
-## v0.6.0：中文公网与快捷维护
-
-中文四模式向导默认 `public-selfsigned`（确认公网 IPv4、HTTPS `8443`），也可用仅本机、现有 HTTPS 代理或导入证书模式。
-
-安装完成集中输出实际配置 WebUI URL、监听端口、服务状态、证书 SHA-256 指纹／有效期和初始化令牌文件位置。**外网连通性未检测**；请自行确认云安全组、本机防火墙和 NAT。自签证书有浏览器信任提示，须核对指纹；不安装系统信任根，不打印令牌或私钥。
-
-维护入口：
-
-```text
-qqon                 中文维护菜单
-qqon status          只读状态
-qqon url             只读显示配置地址
-qqon start           启动固定面板服务
-qqon stop            停止固定面板服务
-qqon restart         重启固定面板服务
-qqon logs            有限日志
-qqon update          升级已安装程序
-qqon backup          权限受限的一致备份
-qqon config          显式改变端口和访问模式
-qqon tls renew       自签证书续期
-```
-
-Linux 在 `/usr/local/bin/qqon` 安装固定包装入口；Windows 在固定程序目录生成 `qqon.cmd`／`qqon.ps1`，安装器单独确认后才向系统 PATH 追加该目录。当前父终端不会自动刷新，重开终端使用；拒绝追加时给出完整路径。旧 `panel-update` 和 Windows `update.ps1` 仍保留。入口只维护固定服务，不提供任意 root／管理员命令执行。
-
-备份先停服并确认进程退出，取得包含认证、data 和证书的一致副本，敏感备份不公开上传；维护操作按原运行状态恢复服务，原本停止的服务不因备份而被启动。改配置和续期使用新的不可变证书代次，启动失败回滚旧配置；不能通过忽略证书校验让健康探针“通过”。
-
-已有 v0.4/v0.5 先显式迁移已知官方管理器，保留旧访问模式，然后升级应用到 v0.6.0，再通过 `qqon config` 开启公网。未知安装不强制接管，不因新默认值而自动暴露原本仅本机的服务。
-
-## 一行启动交互
-
-Linux，在 root 的 Bash 终端运行：
+Linux：root 的交互式 Bash，需已有 curl。
 
 ```sh
 curl -fsSL https://linyufiee.github.io/QQON-Panel/install.sh | bash
 ```
 
-Windows，在管理员 Windows PowerShell 5.1 x64 运行：
+Windows：管理员 Windows PowerShell 5.1 x64。
 
 ```powershell
 irm https://linyufiee.github.io/QQON-Panel/install.ps1 | iex
 ```
 
-入口信任本项目 Pages 和 GitHub Release。下载后的完整安装器先落在受保护的临时目录，核对固定仓库、版本、校验清单，再本地执行；输入从终端读取而不是下载管道。愿意先审阅时可把入口或 Release 安装器保存到文件后执行。
+入口信任本项目 Pages 和 GitHub Release，将完整安装器下载到受保护的临时目录、校验后执行；交互从终端读取，不从下载管道读取答案。先下载审阅方式见 [安装说明](../docs/guide/installation.md)。不关闭 TLS、ACL 或摘要检查。
 
-## 交互与系统范围
+## 独立最高权限授权
 
-- 中文菜单提供安装、升级和只读状态，安装后通过 `qqon` 统一维护。
-- 新装默认公网 IPv4 自签 HTTPS `8443`，必须确认地址；四种模式与实际端口以向导和配置为准，不开放裸 HTTP 公网。旧 v0.5 默认回环 `127.0.0.1:5173` 的行为保留在旧版中。
-- Linux：Debian12/13、Ubuntu22.04/24.04、Rocky9/10、AlmaLinux9/10，amd64/arm64，已运行systemd。APT/DNF仅补缺少的必要依赖；不整机升级、不改源、不关闭SELinux。
-- Windows：Windows10/11及Server2019/2022/2025 x64、NTFS、原生SCM服务，无需WSL/Node/Python。真实版本支持与测试状态见文档矩阵。
-- `status` / `url` 不安装包、不恢复事务、不改变配置。没有已安装环境时明确提示，未知手动安装拒绝接管；公网地址仅为配置结果。
+- 新装专用提示后输入 `同意最高权限`，或独立参数 Linux `--accept-system-management`／Windows `-AcceptSystemManagement`。普通 `--yes`／`-Yes`、update、root/管理员身份本身都不授权。
+- 未授权保留 Linux `server-panel`／Windows `NT SERVICE\QQONPanel`；独立同意后面板进程本身为 root／LocalSystem，失陷可影响整机。Windows 的 Linux 软件／Nginx 建站仍是 `not_supported`。
+- 已有安装先校验并审阅 v0.7.0 管理器，显式迁移 → `qqon update` 升级程序、受限运行并确认健康 → 如需最高权限再独立 `qqon privilege`。
+- Linux 授权命令为 `sudo qqon privilege` 或 `sudo qqon privilege --accept-system-management --yes`；Windows 包装器为 `qqon privilege` 或 `qqon privilege --accept-system-management --yes`。普通升级／状态／管理器迁移不能夹带授权。
+- 安装管理记录 format3；Linux 同意记录固定 `/etc/server-panel/management-consent.json`，Windows 固定 ProgramData 下 `QQON-Panel\management-consent.json`。程序独立校验记录与实际身份，网页无授权记录写入或通用 shell 接口。
+- 完整模式保留 Go 内存软限制、请求／任务／日志上限及较低 CPU/IO 权重，不把包管理子进程放在旧 128 MiB cgroup 硬限制中；面板、包管理器和业务内存分别衡量。
 
-## 固定身份与路径
-
-Linux：`server-panel`账号、`server-panel.service`、`/usr/local/bin/panel`、`/var/lib/server-panel`私有数据，管理记录`/etc/server-panel/install.json`。
-
-Windows：`QQONPanel`服务、`NT SERVICE\QQONPanel`虚拟账号、ProgramFiles下`QQON-Panel\panel.exe`、ProgramData下`QQON-Panel\data`。程序目录与数据目录使用明确ACL，服务身份不能改写安装器。
-
-管理员凭据没有默认值。初始化令牌和恢复码只保存在私有数据里，不贴到工单、日志截图或仓库。
-
-## 升级和旧版迁移
-
-v0.6.0 使用 `qqon update` 升级已安装程序；兼容的原升级入口仍保留：
+新装明确授权的例子，仅用于已校验、审阅的完整 v0.7.0 Release 安装器：
 
 ```sh
-sudo panel-update
+sudo bash install.sh --version v0.7.0 --mode local --yes --accept-system-management
 ```
 
 ```powershell
-& "$env:ProgramFiles\QQON-Panel\update.ps1"
+& .\install.ps1 -Action Install -Version v0.7.0 -AccessMode local -Port 8443 -AcceptSystemManagement -Yes
 ```
 
-先校验归档和内部ELF/PE，再停服、等待进程退出／文件释放、原子替换、版本健康检查；失败回退并保留可恢复事务。不会恢复旧账户状态或重置数据；重启需要重新登录。
+完整路径、Windows 迁移及风险说明见 [托管指南](../docs/guide/hosting.md) 和 [Windows 服务](../docs/guide/windows-services.md#privilege-commands)。
 
-v0.4.0的六资产协议不能读取新九资产协议。已有 v0.4/v0.5 必须显式迁移已知官方管理器，保留原unit、账号和访问配置；迁移成功结束本次操作，程序升级另行执行，新程序健康后才可配置公网。`--yes`不会隐式批准换管理器。修改过的管理器、未知安装及损坏记录不会被强制接管。
+## 访问模式与维护
 
-发行格式3为三种程序包、四个安装/更新脚本、版本清单和SHA256SUMS共九资产；数据格式仍为1，安装管理记录为format2。归档仅含`panel`或`panel.exe`，拒绝链接、多文件、特殊类型、危险路径、截断、CRC错误与超限展开。
+沿用 v0.6 引入的四模式：默认 `public-selfsigned`（确认公网 IPv4、HTTPS `8443`），或仅本机、现有 HTTPS 代理、导入证书。完成后输出实际配置 URL、端口、服务状态、证书指纹／有效期与初始化令牌位置。**外网连通性未检测**；安全组、防火墙和 NAT 自行确认。自签警告须核对指纹，不安装系统信任根，不公开令牌或私钥。
 
-## 维护边界
-
-[v0.6.0 发布 CI #42349315659](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42349315659) 的 `test-build`、`windows-test`、`publish` 均成功，Windows 新增 maintenance 隔离测试也已通过。Linux/Windows CI 不等于真实安装验收；具体系统版本安装、宿主真实 SCM、APT/DNF、SELinux 和物理断电恢复仍未验证。
-
-SHA-256不是独立发布签名；磁盘故障／系统损坏下不承诺绝对恢复。Windows Docker本轮不开放，Linux服务页不是通用Windows服务编辑器。
-
-测试：
-
-```sh
-bash -n scripts/bootstrap.sh
-bash -n scripts/install.sh
-python3 -I -m unittest discover -s scripts/tests
+```text
+qqon                 中文维护菜单
+qqon status          只读状态
+qqon url             只读配置地址
+qqon start           启动固定面板服务
+qqon stop            停止固定面板服务
+qqon restart         重启固定面板服务
+qqon logs            有限日志
+qqon update          校验并升级程序，不授权最高权限
+qqon privilege       独立同意与权限迁移
+qqon backup          停服取得私有一致备份
+qqon config          显式改变访问配置
+qqon tls renew       面板自签证书续期，非网站证书续期
 ```
 
-```powershell
-powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/windows-tests/test_install.ps1
-powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/windows-tests/test_maintenance.ps1 -PanelBinary C:\path\to\verified-test-panel.exe
-```
+Linux 入口 `/usr/local/bin/qqon`；Windows 在固定程序目录生成 `qqon.cmd`／`qqon.ps1`，单独同意追加 PATH 后重开终端，未追加时使用完整路径。原 `panel-update`／Windows `update.ps1` 保留。入口只维护固定面板，不提供任意管理员命令执行。
 
-只对测试进程设置执行策略，不改变系统全局策略；测试使用临时目录与模拟服务，不安装真实宿主服务。
+`status/url` 不安装包、不恢复事务、不改配置。备份先停服并确认退出，含敏感认证／data／证书，保持私有；原停止服务不因备份而启动。配置／换证事务失败保留旧状态，不忽略 TLS 健康校验。
+
+## 软件与建站流程
+
+安装面板不强装 Nginx/PHP/数据库。“软件”页按需提交安装，等待任务完成再查看真实状态；未运行则单独 `start` Nginx／PHP-FPM，确认活动 runtime 后再建站。`install` 不额外 enable/start；APT postinst 常启动，DNF 未必，不承诺开机启用。应用源模板不等于系统源已应用。
+
+站点仅管理自己的 Nginx 配置与 webroot，先 `nginx -t`、reload，再本机标记校验。上传限 2 MiB，UTF-8 编辑限 256 KiB；删除站点保留文件。网站 TLS 只导入已有证书、校验全部域名，非 ACME。
+
+## 系统、身份与路径
+
+- Linux：Debian12/13、Ubuntu22.04/24.04、Rocky9/10、AlmaLinux9/10，amd64/arm64，活动 systemd；安装只补最小依赖，不整机升级、不改源、不关闭 SELinux。
+- Windows：Windows10/11 和 Server2019/2022/2025 x64、NTFS、原生 SCM，不需 WSL/Node/Python；不支持 Linux 业务托管。
+- Linux：`server-panel.service`、`/usr/local/bin/panel`、`/var/lib/server-panel` 私有数据、`/etc/server-panel/install.json`。服务身份按独立授权为受限账号或 root。
+- Windows：`QQONPanel`、ProgramFiles 下 `QQON-Panel\panel.exe`、ProgramData 下 `QQON-Panel\data`，受保护 ACL；受限服务身份不能改写安装器，LocalSystem 仅独立授权后使用。
+
+无默认管理员密码，初始化令牌、恢复码和私钥不进工单、截图或仓库。
+
+## 升级与旧版迁移
+
+Linux 仅识别官方 v0.4/v0.5/v0.6，Windows 仅 v0.5/v0.6；**无 Windows v0.4 支持**。先下载、校验并审阅 v0.7.0 管理器，再显式迁移；未知／改写脚本拒绝接管，未完成事务先恢复。
+
+Windows 从已校验 v0.7.0 脚本执行 `-Action Migrate -Version v0.7.0 -MigrateLegacy -Yes`；`-MigrateLegacy` 只同意旧管理器迁移，不同意 LocalSystem。之后 `qqon update`，受限模式确认健康后才单独 privilege。Linux 同样按迁移 → update → privilege 顺序；普通 yes 不代替任何独立同意。
+
+保留原访问和账号；公网配置另走 `qqon config`。更新先校验归档／内部 ELF/PE，再停服、等待退出／释放文件、原子切换并检查版本；失败回退不等于恢复历史账号数据。完整命令见 [升级与迁移](../docs/guide/upgrade-migration.md)。
+
+v0.7.0 发行清单为 format3 九资产，数据 schema 1；安装管理记录另为 format3。旧 v0.6 安装记录 format2、旧 v0.4 六资产协议仅保留历史，不机械改成新格式。
+
+## 验证边界
+
+[v0.7.0 发布 CI42383705774](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42383705774) 对应 `5d668b229ae57055cb7667e996e50e58c116abba`，test-build/windows-test/publish 成功。主程序阶段 CI42380757509／`fa1483f9…` 的 Linux unit/race/真实托管和 Windows Go＋57PS 是另一提交的阶段记录，不混计。
+
+Windows 57PS 使用 TEMP/mock ACL/SCM，不是真实 LocalSystem 安装；MariaDB/Redis 仅 fake、未真实安装，DNF 未真实测试，网站 HTTPS 仅单元/loopback，完整 GUI 因后续截图工具超时未完成。SHA-256 不是独立签名，磁盘损坏不保证恢复；详见 [支持矩阵](../docs/guide/support-matrix.md)。
+
+本地脚本测试使用仓库已有隔离测试，不执行真实宿主服务安装；只对测试进程设置执行策略，不改全局策略。

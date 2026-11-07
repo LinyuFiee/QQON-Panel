@@ -1,8 +1,8 @@
 # qqon 维护 {#qqon-维护-v0-6-开发中}
 
-**[v0.6.0 预览版已发布](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.6.0)**，提供中文维护菜单及以下基础命令。已有 v0.4/v0.5 安装须先显式迁移管理器，不会因文档更新自动获得新入口。
+**[v0.7.0 预览版已发布](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.7.0)**，提供中文维护菜单与独立 `qqon privilege` 授权。旧安装须先校验、审阅和显式迁移 v0.7.0 管理器，再升级程序；不会因文档更新自动获得新入口。
 
-本页命令表针对当前 v0.6.0；`qqon privilege` 属于下方单列的 **v0.7 未发布预览开发接口**，不能在当前下载上假定可用。
+本页命令适用于匹配的 v0.7.0 安装，普通 yes/update 不代表系统最高权限同意。
 
 ## 中文维护入口
 
@@ -26,19 +26,19 @@
 
 ## 权限与服务身份
 
-安装和维护写操作由 **Linux root** 或 **Windows 管理员终端**执行；这不意味着当前 v0.6.0 面板服务以最高权限常驻。
+安装和维护写操作由 **Linux root** 或 **Windows 管理员终端**执行；终端权限本身不授权面板常驻最高权限。
 
-- v0.6.0 Linux 保留固定 `server-panel` 账号与 `server-panel.service`。
-- v0.6.0 Windows 保留 `QQONPanel` 服务与 `NT SERVICE\QQONPanel` 虚拟账号。
+- 未授权 Linux 使用固定 `server-panel` 账号与 `server-panel.service`；独立同意后服务使用 root。
+- 未授权 Windows 使用 `QQONPanel` 与 `NT SERVICE\QQONPanel` 虚拟账号；独立同意后使用 LocalSystem。
 - 不因普通升级或修改访问配置而重建账号、接管不明安装，或放宽私有数据权限。
 
-### v0.7 独立权限迁移（未发布） {#system-management}
+### v0.7.0 独立权限迁移 {#system-management}
 
-`qqon privilege` 是本轮预览开发中的**单独授权入口**；Windows 管理器对应 `-Maintenance privilege`。新安装显式参数为 Linux `--accept-system-management`、Windows `-AcceptSystemManagement`。交互同意须在专用提示后输入 `同意最高权限`，不是泛用“y”。未授权维持 restricted。
+`qqon privilege` 是**单独授权入口**；Windows 管理器对应 `-Maintenance privilege`。新安装显式参数为 Linux `--accept-system-management`、Windows `-AcceptSystemManagement`。交互同意须在专用提示后输入 `同意最高权限`，不是泛用“y”。未授权维持 restricted。
 
 授权意味着面板进程本身将以 Linux **root** 或 Windows **LocalSystem** 运行，不是只授权一次命令；失陷可能影响整台主机。必须同时有固定受保护同意记录和正确的实际服务身份，手动把 unit/SCM 改成高权限不算授权。普通 `--yes`／`-Yes`、`qqon update`、配置访问和换证都不授权；网页也不能写同意记录。
 
-已有安装须先识别已知官方管理器并独立迁移，保留原访问和账号。Linux 开发顺序为 **迁移 manager → `sudo qqon update` 至不低于 v0.7.0、仍为 restricted → `sudo qqon privilege` 独立授权**；先确认新程序在受限身份下健康。
+已有安装须先校验并审阅 v0.7.0 管理器，显式迁移已知旧管理器，保留原访问和账号。Linux 顺序为 **迁移 manager → `sudo qqon update` 至 v0.7.0、仍为 restricted 并确认健康 → 如需 root 再 `sudo qqon privilege` 独立授权**。
 
 Linux 已确认语法为 `sudo qqon privilege [--accept-system-management] [--yes]`。不带专用标志时走交互同意；带 `--accept-system-management` 明确表达独立授权。**单独 `--yes` 不授权**；普通 `--upgrade`／`--update`／`--status`／`--migrate-manager` 与授权标志组合均拒绝，`qqon update/status` 也不能夹带授权。
 
@@ -50,7 +50,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:ProgramFiles\QQON-
 
 路径必须保留 PowerShell 双引号以展开环境变量并处理空格；此处 ExecutionPolicy 仅作用于子进程，仍须遵循组织授权。Windows 仅已知 v0.5/v0.6 先独立 Migrate、再 update、最后 privilege；无 Windows v0.4 支持，新装与迁移参数详见 [Windows 命令](./windows-services#privilege-commands)。
 
-当前没有公开 v0.7 发行可升级，v0.6 只能受限安装。最新合并 CI 的 Linux unit／race／真实托管和 Windows Go＋57 项 PowerShell 均已成功，但不能替代旧安装权限迁移／回退全验收；Windows 本机及 CI 中的 **57 项 TEMP/mock ACL/SCM** 均不是真实 LocalSystem 安装。对应提交与验证范围、Linux 新装示例及 protocol 5 边界见 [v0.7 托管开发指南](./hosting#verification)。
+v0.7.0 已发布，但发布／阶段 CI 不替代旧安装权限迁移与回退全验收。Windows 本机及阶段 CI 中的 **57 项 TEMP/mock ACL/SCM** 均不是真实 LocalSystem 安装；对应提交、新装与 protocol 5 边界见 [v0.7.0 托管指南](./hosting#verification)。
 
 ## 备份与事务
 
@@ -58,16 +58,15 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:ProgramFiles\QQON-
 
 `config` 与 `tls renew` 按事务执行：先校验并保留旧配置/证书，再切换与检查；失败按事务记录恢复。不要删除锁、事务或旧文件来强行重试，也不通过忽略 TLS 校验使健康探针成功。磁盘损坏、权限变化和物理断电仍可能阻止恢复，不承诺绝对回退。
 
-## 从 v0.4 / v0.5 迁移
+## 从旧版迁移到 v0.7.0 {#从-v0-4-v0-5-迁移}
 
-已有受管理安装按以下顺序升级 v0.6.0：
+Linux 已知 v0.4/v0.5/v0.6、Windows 已知 v0.5/v0.6 按以下顺序处理；无 Windows v0.4 支持：
 
-1. 备份私有数据，识别官方旧管理器，经管理员**显式确认**迁移新管理器；保留旧访问方式、端口、服务身份和数据。
-2. 单独升级到支持新配置的程序，先确认新程序在原访问方式下正常运行。
-3. 如需公网 IP HTTPS，再通过 `qqon config` 确认公网 IPv4 和访问配置；不能先把新公网配置交给旧程序。
+1. 备份私有数据，校验和审阅 v0.7.0 管理器，显式迁移已知官方旧管理器，保留原访问、身份和数据。
+2. 单独 `qqon update` 升级到 v0.7.0，先确认受限模式下新程序健康。
+3. 需要 root／LocalSystem 时独立 `qqon privilege` 同意；普通 yes/update 不能代替。
+4. 需要改变公网访问时，再独立 `qqon config`，不自动公开旧服务。
 
-迁移或普通升级不会因新安装默认值变化而自动开放公网。未知手动安装、被修改的管理器不能强制接管；完整边界见 [升级与迁移](./upgrade-migration)。
-
-Windows 新增 maintenance 隔离测试已在 [CI #42349315659](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42349315659) 通过，不代表宿主真实 SCM 服务安装或各系统验收完成，见 [支持矩阵](./support-matrix)。
+未知或改写的管理器不强制接管，未完成事务先恢复；完整命令见 [升级与迁移](./upgrade-migration)。预览发布和隔离 CI 不等于真实 SCM／逐系统故障恢复验收，见 [支持矩阵](./support-matrix)。
 
 下一步阅读 [公网 IP HTTPS](./public-https) 与 [安全边界](./security)。

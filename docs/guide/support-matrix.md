@@ -1,21 +1,21 @@
 # 支持矩阵与验证状态
 
 ::: warning “已发布 / CI 通过”不等于“实机验收”
-当前已发布预览版是 **[v0.6.0](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.6.0)**；v0.4／v0.5／v0.6 均不是稳定成熟承诺。[发布 CI #42349315659](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42349315659) 的 `test-build`、`windows-test`、`publish` 均为 `success`，含新增 Windows maintenance 隔离测试。发布、CI 验证和具体系统安装是不同层次；不能据此宣称所有系统或真实 SCM 安装已完成验收。**v0.7 预览尚未发布；其 Ubuntu 真实托管 CI 与 Windows 本机隔离结果在下节单列，不沿用旧发布结果作本轮验收。**
+当前已发布预览版是 **[v0.7.0](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.7.0)**，旧 v0.4／v0.5／v0.6 保留历史且无真实软件安装／建站。[发布 CI42383705774](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42383705774) 三项任务成功，但发行与具体主机验收不同；下方阶段测试与剩余限制仍保留，不宣称全平台通过。
 :::
 
 ## 系统范围
 
 | 系统 / 架构 | 实现与发行状态 | CI 验证边界 | 实机状态 |
 | --- | --- | --- | --- |
-| Debian 12、13 / amd64、arm64 | v0.6.0 Linux 产物与 APT、systemd 安装路径已发布 | `test-build` 成功；不等于逐版本 APT/systemd 安装验收 | **具体版本、架构安装与恢复仍未验证** |
-| Ubuntu 22.04、24.04 / amd64、arm64 | v0.6.0 Linux 产物与 APT、systemd 安装路径已发布 | `test-build` 成功；Linux runner 不覆盖两个版本的全套安装/升级 | **具体版本、架构安装与恢复仍未验证** |
-| Rocky Linux 9、10 / amd64、arm64 | v0.6.0 Linux 产物与 DNF 适配已发布 | `test-build` 成功；模拟包管理器不验证真实 DNF/SELinux/systemd | **具体版本安装、SELinux 与恢复仍未验证** |
-| AlmaLinux 9、10 / amd64、arm64 | v0.6.0 Linux 产物与 DNF 适配已发布 | `test-build` 成功；不能用 Rocky 或同系测试替代 | **具体版本安装、SELinux 与恢复仍未验证** |
-| Windows 10、11 / x64 | v0.6.0 原生程序、指标与服务安装器已发布 | `windows-test` 含 maintenance 隔离测试成功；不是实际 SCM 注册 | **真实 SCM、ACL、安装/升级/回退仍未验证** |
-| Windows Server 2019、2022、2025 / x64 | v0.6.0 x64 产物与服务安装器已发布 | `windows-test` 成功；单个 runner 不覆盖三个 Server 版本 | **逐版本真实安装、权限与恢复仍未验证** |
+| Debian 12、13 / amd64、arm64 | v0.7.0 Linux 产物，APT、systemd 安装路径 | 主程序阶段 Linux 测试通过，不等于逐版本安装 | **具体版本、架构安装与恢复仍未全验收** |
+| Ubuntu 22.04、24.04 / amd64、arm64 | v0.7.0 Linux 产物，授权软件／网站流程 | 特定 Ubuntu runner 的真实 Nginx/PHP 托管场景通过 | **不能外推两个版本／架构的完整安装迁移与恢复** |
+| Rocky Linux 9、10 / amd64、arm64 | v0.7.0 Linux 产物，DNF 适配 | 模拟包管理器不验证真实 DNF/SELinux/systemd | **DNF、具体版本安装、SELinux 与恢复未真实验收** |
+| AlmaLinux 9、10 / amd64、arm64 | v0.7.0 Linux 产物，DNF 适配 | 不能用 Ubuntu 或同系测试替代 | **DNF、具体版本安装、SELinux 与恢复未真实验收** |
+| Windows 10、11 / x64 | v0.7.0 原生程序、指标、授权服务安装器 | Go 与 PowerShell 隔离测试通过；不是实际 SCM 注册 | **真实 SCM/LocalSystem、ACL、安装与回退未验收** |
+| Windows Server 2019、2022、2025 / x64 | v0.7.0 x64 产物与服务安装器 | 单个 Windows runner 不覆盖全部 Server 版本 | **逐版本真实安装、权限与恢复未验收** |
 
-上述 CI 对应已发布 tag 提交 `3cfd1a8fe75eca46fd1d991749c1be39f546638c`。新增 Windows 维护测试使用隔离环境，不安装宿主真实服务。旧 v0.5 的附件复核和只读版本检查保留在 [历史发布记录](./releases#下一版本-v0-5-待发布)，不能代替 v0.6 的真实系统验收。
+本页把 v0.7.0 发行范围与阶段实测范围分开。旧 v0.6 的发布 CI42349315659／`3cfd1a8…` 及更早 v0.5 记录仅保留在 [历史发布页](./releases#当前已发布-v0-6-0)，不作为当前标签的实机验收。
 
 ## 必须满足的条件
 
@@ -35,9 +35,9 @@
 
 ## 功能与平台
 
-| 能力 | Linux | Windows（v0.6.0） |
+| 能力 | Linux（v0.7.0） | Windows（v0.7.0） |
 | --- | --- | --- |
-| 面板作为后台服务运行 | `server-panel.service`，低权限账号 | 原生 SCM 服务 `QQONPanel`，虚拟服务账号 |
+| 面板作为后台服务运行 | `server-panel.service`，未授权受限、独立授权后 root | 原生 `QQONPanel`，未授权虚拟账号、独立授权后 LocalSystem |
 | 主机指标 | Linux 系统接口，按可用性返回 | 原生 Windows API；不支持项说明原因，不填模拟值 |
 | 面板中的系统服务列表 | Linux systemd 范围 | **不支持**；与面板自身注册为 Windows 服务是两回事 |
 | Docker 集成 | 显式授权的 Unix socket；默认不开写操作 | **不支持**，没有 named pipe 集成 |
@@ -50,13 +50,13 @@ Windows 指标需要特别注意：首个速率样本可以为不可用；CPU �
 
 ## 验证不能替代的内容
 
-跨编译只证明能生成目标程序；单元测试和临时目录模拟只覆盖其断言。上表记录的是 v0.6 历史发行范围；下节新增的 v0.7 Ubuntu 真实托管 CI 也只覆盖列出的场景。逐发行版／架构安装、DNF、SELinux、Windows 真实 SCM/ACL、开机启动、完整旧机迁移／权限回退及物理断电／磁盘故障仍不能由单个 runner 推导通过。
+跨编译只证明能生成目标程序；单元／临时目录测试只覆盖其断言。v0.7.0 已发布不等于逐发行版／架构安装、DNF、SELinux、Windows SCM/ACL、完整旧机迁移／权限回退、物理断电／磁盘故障均通过；下面的真实 Ubuntu 场景也不能覆盖全部情况。
 
-## v0.7 托管预览开发范围 {#hosting-preview}
+## v0.7.0 托管预览范围 {#hosting-preview}
 
-**未发布；已有有限验证，不代表全平台验收。** 下表是本轮开发能力与明确限制，不是已发布支持承诺；实际操作见 [托管开发指南](./hosting)，已完成与未覆盖的测试在表后单列。
+下表是当前预览版能力和限制，不是全平台验收承诺；实际操作见 [托管指南](./hosting)，验证结果另列。
 
-| 能力 | Linux 开发范围 | Windows 开发范围 |
+| 能力 | Linux 范围 | Windows 范围 |
 | --- | --- | --- |
 | 最高权限服务身份 | 独立授权后 root；未授权 restricted | 独立授权后 LocalSystem；未授权虚拟服务账号 |
 | 真实软件安装／启停 | 白名单 Nginx、PHP-FPM、MariaDB、Redis；现有可信 APT/DNF 源和 systemd | **不支持 Linux 软件管理**，LocalSystem 不改变平台限制 |
@@ -68,7 +68,7 @@ Windows 指标需要特别注意：首个速率样本可以为不可用；CPU �
 
 ### v0.7 本轮验证结果
 
-最新全合并代码 [CI #42380757509](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42380757509) 已成功，提交 `fa1483f9ec57294d000a6f71014c4e6ee7afe87c`；Linux unit／race／真实托管及 Windows Go＋57 项 PowerShell 全部成功，但 Windows 仍非真实 SCM／LocalSystem 安装。下表的 `80fea3b…` 场景与 15.42 MiB 属于前一次独立记录。
+主程序阶段 [CI #42380757509](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42380757509) 对应 `fa1483f9ec57294d000a6f71014c4e6ee7afe87c`，Linux unit／race／真实托管及 Windows Go＋57PS 成功，Windows 仍非真实 SCM/LocalSystem。该次5次操作后 process RSS 中位数 **15.51 MiB**、最大值 **15.52 MiB**；下表更早 `80fea3b…` 的 **15.42 MiB** 独立保留。两次均不含业务、非 soak，不是发行标签的新测量。
 
 | 环境／项目 | 已确认结果 | 剩余边界 |
 | --- | --- | --- |
@@ -80,6 +80,6 @@ Windows 指标需要特别注意：首个速率样本可以为不可用；CPU �
 | GUI | 仅登录截图通过 | 后续截图工具超时，完整 GUI 验收未完成 |
 | 面板 RSS | `80fea3b…` 对应 Ubuntu CI 中 5 次操作后短时采样，中位数＝最大值＝**15.42 MiB** | 不移作后续合并 CI 测量；仅面板进程，不包含业务 RAM，不是 SLA、soak 或完整负载测试 |
 
-完整验证细节见 [托管开发指南](./hosting#verification)。单个 Ubuntu runner 成功不能推导 Windows 实际服务安装、全发行版、长期负载、权限迁移／回退与物理故障恢复全部通过。
+完整验证细节见 [托管指南](./hosting#verification)。单个 Ubuntu runner 成功不能推导 Windows 实际服务安装、全发行版、长期负载、权限迁移／回退与物理故障恢复全部通过。
 
-v0.4.0／v0.5.0／v0.6.0 没有真实软件安装和网站部署；v0.7 开发范围也不包括 Compose、完整应用商店、终端、数据库管理或 ACME。安装遇到不在矩阵内的系统应停止并评估，不用“强制”选项掩盖不兼容。
+v0.4.0／v0.5.0／v0.6.0 没有真实软件安装和网站部署；v0.7.0 也不包括 Compose、完整应用商店、终端、数据库管理或 ACME。安装遇到不在矩阵内的系统应停止并评估，不用“强制”选项掩盖不兼容。

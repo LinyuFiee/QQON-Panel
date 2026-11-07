@@ -1,7 +1,7 @@
 # 旧版 v0.4.0 安装 {#当前-v0-4-0-安装}
 
 ::: info 固定旧版说明
-当前已发布预览版是 **[v0.6.0](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.6.0)**，新安装请用 [快速开始](./quickstart)。本页保留 **v0.4.0 预览版**的固定版本安装器与程序，避免 `latest` 选到旧管理器不兼容的 format3。旧版不提供 Windows 安装包、RPM 适配、交互菜单或 v0.6 公网自签默认配置；v0.4／v0.5／v0.6 均没有真实业务软件安装与网站创建／部署。
+当前已发布预览版是 **[v0.7.0](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.7.0)**，新安装请用 [快速开始](./quickstart)。本页保留 **v0.4.0 预览版**的固定版本安装器与程序，避免 `latest` 选到旧管理器不兼容的 format3。旧版不提供 Windows 安装包、RPM 适配、交互菜单或后来 v0.6 引入的公网自签默认配置；v0.4／v0.5／v0.6 均没有真实业务软件安装与网站创建／部署。
 :::
 
 ## 支持条件
@@ -55,9 +55,9 @@ sudo journalctl -u server-panel.service -n 80 --no-pager
 
 ## 旧版本升级边界
 
-v0.4.0 的管理器理解 **format2、六个附件**；v0.5/v0.6 的 format3、九个附件不是它能自动消费的协议。新的 Release 不会默默更换你本地审阅过的安装器。
+v0.4.0 的管理器理解 **format2、六个附件**；v0.5/v0.6/v0.7 的 format3、九个附件不是它能自动消费的协议。新的 Release 不会默默更换你本地审阅过的安装器。
 
-- 当前已发布预览版 v0.6.0 可下载；v0.7 尚未发布，不要编造 `v0.4.1` 或 v0.7 等未确认存在的下载目标。
+- 当前已发布预览版 v0.7.0 可下载；不要编造 `v0.4.1` 等未经确认的下载目标。
 - 需要保留 v0.4.0 时继续固定该版本，无需为了“更新”重复安装。
-- 升级 v0.6.0 时按 [管理器迁移说明](./upgrade-migration#manager-migration) 显式迁移并保留旧访问，再单独升级程序，最后按需配置公网；不指望旧 `panel-update` 自动学会新格式。
+- 升级 v0.7.0 时先校验和审阅 v0.7.0 管理器，按 [迁移说明](./upgrade-migration#manager-migration) 显式迁移并保留旧访问，再 `qqon update`、确认受限运行健康；需要托管时另行 `qqon privilege`。不指望旧 `panel-update` 自动学会新格式。
 - 旧开发版 format1、手动部署或被修改的管理器不属于自动迁移范围。

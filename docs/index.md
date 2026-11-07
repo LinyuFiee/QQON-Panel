@@ -9,10 +9,10 @@ title: 一行命令开始
 
 # QQON-Panel
 
-轻量服务器面板。**[v0.6.0 预览版已发布](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.6.0)**，下面是当前已发布版本的安装入口，不是 v0.7。
+轻量服务器面板。**[v0.7.0 预览版已发布](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.7.0)**，支持独立授权后的 Linux 软件安装、网站管理与后台任务，下方一键入口获取当前版本。
 
 ::: warning 版本与能力边界
-v0.4.0／v0.5.0／v0.6.0 均为预览版，没有真实业务软件安装或网站创建／部署能力，不代表稳定成熟或全平台实机验收。**v0.7 预览开发中，尚未发布**；已有 Ubuntu 真实托管 CI 和 Windows 本机隔离测试，仍非全平台验收。最高权限授权、Linux 软件／网站／任务与[验证边界](./guide/hosting#verification)见托管开发指南。
+预览版不等于稳定成熟或全平台实机验收。旧 v0.4.0／v0.5.0／v0.6.0 没有真实软件安装和建站；v0.7.0 的托管能力须独立同意 root／LocalSystem，普通 yes/update 不授权，Windows 软件／建站仍不支持。流程与[验证边界](./guide/hosting#verification)见托管指南。
 :::
 
 ## Linux
@@ -35,4 +35,4 @@ irm https://linyufiee.github.io/QQON-Panel/install.ps1 | iex
 
 自签证书会有浏览器警告，请核对可信终端显示的 SHA-256 指纹。公网链接只是配置结果，未检测外网可达性；云安全组、防火墙和 NAT 需人工配置。[公网 HTTPS 说明](./guide/public-https) · [维护命令](./guide/maintenance)
 
-一行命令会执行本项目的远程引导脚本。[先下载审阅与安装要求](./guide/installation) · [快速开始](./guide/quickstart) · [支持与验证边界](./guide/support-matrix) · [安全边界](./guide/security) · [发布记录](./guide/releases) · [CI 结果](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42349315659)
+一行命令会执行本项目的远程引导脚本。[先下载审阅与安装要求](./guide/installation) · [快速开始](./guide/quickstart) · [支持与验证边界](./guide/support-matrix) · [安全边界](./guide/security) · [发布记录](./guide/releases) · [发布 CI](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42383705774)

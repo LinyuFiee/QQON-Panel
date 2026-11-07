@@ -1,8 +1,8 @@
 # 安装说明
 
-**[v0.6.0 预览版已发布](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.6.0)**，提供 Linux APT/DNF 与 Windows x64 中文安装、四种访问模式及 `qqon` 维护。直接开始见 [一键命令](./quickstart#next-release)；旧版见 [v0.4.0 指南](./legacy-v0-4) 与 [v0.5.0 说明](./releases#下一版本-v0-5-待发布)。
+**[v0.7.0 预览版已发布](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.7.0)**，提供 Linux APT/DNF 与 Windows x64 中文安装、四种访问模式、`qqon` 维护及独立系统管理授权。直接开始见 [一键命令](./quickstart#next-release)。
 
-本页是**当前 v0.6.0 下载**的安装说明。v0.4.0／v0.5.0／v0.6.0 均为预览定位，没有真实业务软件安装和建站能力。v0.7 的 root／LocalSystem 授权与 Linux 托管尚在开发、未发布；已有有限 CI／隔离测试，不等于全平台验收，另见 [托管开发指南](./hosting)；不要给当前下载附加 v0.7 专属参数。
+Linux 经独立授权后可真实安装业务软件和管理网站；Windows 相关业务操作仍为 `not_supported`，见 [托管指南](./hosting)。旧 v0.4.0／v0.5.0／v0.6.0 均为预览版且无真实软件安装／建站，升级先 [校验并迁移 v0.7.0 管理器](./upgrade-migration#manager-migration)，不要混用旧脚本参数。
 
 Linux/Windows CI（含 Windows 新增 maintenance 测试）已通过，但不等于具体系统版本安装、真实 SCM、SELinux 或物理故障恢复已验收，详见 [支持矩阵](./support-matrix)。
 
@@ -73,7 +73,7 @@ notepad.exe $entryFile
 
 新安装完成后输出配置 URL、端口、服务状态、证书指纹／有效期和私有初始化令牌文件位置。自签证书有浏览器警告，须核对可信终端的 SHA-256 指纹。**公网链接仅表示配置结果，外网连通性未检测**；云安全组、主机防火墙和 NAT 由管理员配置。DNS、代理、公共 CA 证书申请也不由安装器自动完成，见 [公网 HTTPS](./public-https)。
 
-旧 v0.4/v0.5 保留回环／代理行为，不自动套用新装默认值；先迁移管理器、再升级程序，最后按需运行 `qqon config`。
+旧 v0.4/v0.5 的回环／代理行为，以及 v0.6 的实际访问配置都保留，不自动套用新装默认值。先迁移已校验的 v0.7.0 管理器、再 `qqon update`；最高权限另走 `qqon privilege`，需要改公网模式时另走 `qqon config`。
 
 ## Linux 安装流程 {#linux-installation}
 
@@ -82,7 +82,7 @@ notepad.exe $entryFile
 - Debian/Ubuntu 使用现有 APT 源；Rocky/AlmaLinux 使用现有 DNF 源。
 - 最小依赖为 Python 3、CA 证书以及确实缺失的账号/系统工具；不会安装 Go、Node、数据库或 Docker。
 - 按上述四种模式选择访问方式；公网默认 HTTPS `8443`，不开放裸 HTTP 公网。
-- 使用固定低权限服务账号。完成后检查安装记录、unit、实际监听与服务版本，而不是仅看到“下载完成”。
+- 未独立授权时使用固定低权限 `server-panel` 服务账号；专用确认或 `--accept-system-management` 才启用 root 模式。普通 `--yes` 不授权。完成后检查安装记录、实际身份、unit、监听与版本，不只看“下载完成”。
 
 Linux 既定路径如下，升级/迁移不得随意接管未知同名文件：
 
@@ -100,7 +100,7 @@ Linux 既定路径如下，升级/迁移不得随意接管未知同名文件：
 
 管理员可交互安装或使用明确参数，使用原生 PowerShell/.NET，不引入 Python/WSL/Node。四种模式与公网自签默认值同上。
 
-程序作为原生 SCM 服务 `QQONPanel` 运行，虚拟服务账号为 `NT SERVICE\QQONPanel`，不是把任意控制台程序包装成假服务。NTFS 权限、受保护目录和服务停止等待失败时应停止，不用删除锁文件或放宽 ACL 继续。
+程序作为原生 SCM 服务 `QQONPanel` 运行。未授权时为虚拟服务账号 `NT SERVICE\QQONPanel`，只有独立 `-AcceptSystemManagement` 或精确短语确认才使用 LocalSystem；不是把任意控制台程序包装成服务。Windows 的 Linux 软件／网站仍为 `not_supported`。NTFS 权限、受保护目录和停止等待失败时应停止，不删锁或放宽 ACL 继续。
 
 默认程序位于系统 Program Files 的 `QQON-Panel\panel.exe`，私有数据位于系统 ProgramData 的 `QQON-Panel\data`；不假设系统盘一定是 `C:`。`qqon.cmd`／`qqon.ps1` 位于固定程序目录，单独确认追加 PATH 后需重开终端；不追加时按安装结果的完整路径运行。详细权限和只读检查见 [Windows 服务](./windows-services)。
 

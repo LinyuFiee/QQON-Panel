@@ -2,7 +2,7 @@
 
 ## 提示需要新版或不兼容 Release {#pending-release}
 
-**当前已发布预览版为 [v0.6.0](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.6.0)**。仍提示版本不兼容、缺少 Windows 附件或需要新版时，先停止并查看 [发布状态](./releases)，核对来源、版本及是否仍使用旧 v0.4/v0.5 管理器；旧版升级需 [显式迁移管理器](./upgrade-migration#manager-migration)。v0.7 预览仍在开发、未发布；已有有限 CI／隔离测试，不等于全平台验收，不能靠改下载链接或给旧脚本加新参数获得托管能力。
+**当前已发布预览版为 [v0.7.0](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.7.0)**。仍提示不兼容、缺少附件或未知参数时，先查看 [发布状态](./releases)，核对实际程序／管理器版本。旧 v0.4/v0.5/v0.6 需先 [校验并显式迁移 v0.7.0 管理器](./upgrade-migration#manager-migration)，不能只给旧脚本追加新参数。
 
 版本/协议不兼容不是反复重试能解决的问题。不要把 `latest` 改成不存在的版本、下载任意分支安装器、改清单格式或跳过摘要检查；网络下载失败则按下一节排查。Pages 部署与程序 Release 仍是独立流程。
 
@@ -18,11 +18,11 @@
 
 网络管道的标准输入承载脚本，不承载菜单答案。交互入口需 `/dev/tty` 或 Windows 控制台；CI/非交互环境应先下载审阅，再使用该官方已发布安装器实际支持的明确参数。
 
-`--yes` / `-Yes` 不代表关闭来源、权限、平台、数据格式或摘要校验，也不隐式批准更换管理器或错误公网地址；它与 `qqon update` 都不能授予 v0.7 的 root/LocalSystem 系统管理权限。不能混用 v0.4/v0.5/v0.6 和未发布 v0.7 的帮助与配置。
+`--yes` / `-Yes` 不代表关闭来源、权限、平台、数据格式或摘要校验，也不隐式批准更换管理器或错误公网地址；它与 `qqon update` 都不能授予 v0.7 的 root/LocalSystem 系统管理权限。不能混用 v0.4/v0.5/v0.6 与 v0.7.0 的帮助和配置。
 
 ## Linux 平台或依赖被拒绝
 
-核对 [支持矩阵](./support-matrix)。v0.6.0 提供 APT/DNF 安装路径，仍需要 root、活动 systemd、矩阵内发行版与受支持架构；无 systemd 的容器或矩阵外系统应停止，不能强行接管。
+核对 [支持矩阵](./support-matrix)。v0.7.0 提供 APT/DNF 安装路径，仍需要 root、活动 systemd、矩阵内发行版与受支持架构；无 systemd 的容器或矩阵外系统应停止，不能强行接管。
 
 APT/DNF 失败先检查现有源、锁、网络与系统时间，不执行整机升级、替换源或关闭 SELinux 来满足面板安装。最小依赖安装失败不应迫使旧面板停服；保留完整错误但清除代理凭据后再报告。
 
@@ -35,7 +35,7 @@ sudo systemctl status server-panel.service --no-pager
 sudo journalctl -u server-panel.service -n 80 --no-pager
 ```
 
-- v0.6 新装默认公网 IPv4 自签 HTTPS `8443`；核对确认的 IPv4、实际端口、HTTPS 地址和可信终端证书指纹。
+- v0.7.0 新装沿用公网 IPv4 自签 HTTPS `8443`；核对确认的 IPv4、实际端口、HTTPS 地址和可信终端证书指纹。
 - 自签浏览器警告不等于网络故障。指纹或地址不一致时停止，不关闭全局证书校验；见 [公网 HTTPS](./public-https)。
 - 公网 URL 仅为配置结果，**外网连通性未检测**。云安全组、主机防火墙和 NAT 需人工检查；本机成功不能证明外网可达。
 - 旧 v0.4/v0.5 或仅本机模式继续回环／代理访问，默认 `127.0.0.1:5173`，不能直接用公网 IP 连接。迁移新管理器不自动开放公网。
@@ -44,7 +44,7 @@ sudo journalctl -u server-panel.service -n 80 --no-pager
 
 ## Windows 服务或权限错误 {#windows-errors}
 
-本节适用于已发布的 **v0.6.0 Windows** 安装路径。新增 maintenance 隔离测试已在 CI 通过，但不意味着宿主真实 SCM/权限验收完成，详见 [Windows 服务](./windows-services)。
+本节适用于 **v0.7.0 Windows** 安装路径。发布及阶段隔离测试通过不代表真实 SCM／LocalSystem 权限验收，详见 [Windows 服务](./windows-services)。
 
 ```powershell
 Get-Service -Name QQONPanel
@@ -72,9 +72,9 @@ sc.exe queryex QQONPanel
 
 恢复结束不代表自动重试了失败版本，应重新核对服务实际健康状态。账号与私有数据不会因二进制回退自动恢复到历史状态；需要数据恢复时先停止写入并制定独立方案，不能在没有备份时试错。
 
-## v0.7 软件／网站／任务问题（预览开发中） {#hosting-preview}
+## v0.7.0 软件／网站／任务问题 {#hosting-preview}
 
-当前 v0.4／v0.5／v0.6 没有真实软件安装或建站，v0.7 尚未发布；已有有限 CI／隔离测试，不代表完整验收。旧版看不到新能力不是安装失败。以下仅供匹配本轮开发程序与管理器的隔离预览环境使用，详见 [托管开发指南](./hosting)。
+旧 v0.4／v0.5／v0.6 没有真实软件安装或建站，不要把它们的页面当作 v0.7.0。当前功能需匹配程序／管理器、实际平台依赖和独立授权；预览发行不等于全平台验收，见 [托管指南](./hosting)。
 
 - **管理权限不可用**：检查实际 root／LocalSystem 身份与受保护固定同意记录；普通 yes/update 不授权。按匹配的新 `qqon privilege` 流程独立同意，不手写记录、复制别处 JSON 或改服务身份绕过。
 - **Windows 软件／网站不可用**：这是明确的平台边界；LocalSystem 不提供 Linux APT/DNF 或 Nginx 建站，不能靠继续提权解决。
@@ -90,4 +90,4 @@ sc.exe queryex QQONPanel
 
 向 [项目 Issues](https://github.com/LinyuFiee/QQON-Panel/issues) 提供：系统与架构、实际 Release 版本/来源、安装或升级阶段、可复现步骤、脱敏错误和对应 CI 提交（若相关）。明确区分“编译通过”“临时目录模拟”“真实机器安装”。
 
-不要上传账号 JSON、初始化令牌、TOTP/恢复码、Cookie、私钥、完整 ProgramData/数据目录或含代理密码的日志。注明实际 v0.6.0/v0.5.0/v0.4.0 预览版本；v0.7 开发代码须注明具体提交与未发布状态，不把开发行为当作已发布版本功能。
+不要上传账号 JSON、初始化令牌、TOTP/恢复码、Cookie、私钥、完整 ProgramData/数据目录或含代理密码的日志。注明实际 v0.7.0/v0.6.0/v0.5.0/v0.4.0 预览版本；自行构建或后续开发代码须注明具体提交，不把不同提交的行为当作已发布版本保证。

@@ -6,11 +6,11 @@
 
 文档构建只复制仓库 bootstrap，入口再选择官方已发布 Release。安装器核对清单、大小、SHA-256、归档内容和程序身份，但**清单与产物属于同一发布源，哈希不是独立签名**。不要使用不明镜像、关闭证书检查、执行下载目录里的辅助文件或让远程参数决定任意脚本路径。
 
-更审慎的流程见 [先下载审阅](./installation#下载与信任)。v0.6.0 预览版已发布，v0.4／v0.5／v0.6 均不代表成熟稳定；新入口仍必须拒绝不兼容格式，旧 v0.4/v0.5 通过 [显式管理器迁移](./upgrade-migration#manager-migration) 处理，不绕过安全检查。
+更审慎的流程见 [先下载审阅](./installation#下载与信任)。当前为 v0.7.0 预览版，旧 v0.4／v0.5／v0.6 保留历史且无真实软件安装／建站；这些版本都不代表成熟稳定。旧安装通过 [已校验 v0.7.0 管理器的显式迁移](./upgrade-migration#manager-migration) 升级，不绕过安全检查。
 
 ## 监听与反向代理
 
-- v0.6 新装默认公网 IPv4 自签 HTTPS `8443`，必须由用户确认地址；也可选择仅本机、已有 HTTPS 代理或导入证书。
+- v0.7.0 新装沿用公网 IPv4 自签 HTTPS `8443`，必须由用户确认地址；也可选择仅本机、已有 HTTPS 代理或导入证书。
 - 自签证书有浏览器信任警告。核对可信终端的 SHA-256 指纹与访问地址，不一致时停止访问，不关闭全局证书校验。
 - 完成提示中的公网 URL 仅为配置结果，**外网连通性未检测**；云安全组、防火墙和 NAT 需人工配置，尽量限制允许来源。
 - 旧 v0.4/v0.5 默认回环 `127.0.0.1:5173`（v0.5 可选端口），迁移保留原回环／代理访问。先新程序、后显式配置公网，不自动套用新装默认值。
@@ -30,23 +30,23 @@
 
 ## 服务权限与最小授权
 
-### Linux（当前已发布 v0.6.0）
+### Linux
 
-安装与维护写操作由 root 显式执行；当前 v0.6.0 面板服务使用低权限 `server-panel` 账号。程序、管理器、systemd unit、安装记录不应由该账号修改。检测到未知安装、符号链接或不安全权限时应停止，不用批量 `chmod 777` 或手改 root 身份来解决。
+安装与维护写操作由 root 显式执行；未独立授权的 v0.7.0 面板使用 `server-panel` 低权限账号，与旧版本行为一致。程序、管理器、unit、安装记录不应由该受限账号修改；独立授权后的 root 模式见下节。未知安装、符号链接或不安全权限应停止处理，不用 `chmod 777` 或手改服务身份绕过。
 
 文件浏览需显式授权根目录，不能覆盖面板私有数据。Docker Unix socket 即便用于只读网页功能，也可能赋予进程接近 root 的主机能力；默认不开写操作，授权前应单独评估，优先考虑隔离与 rootless Docker。
 
 ### Windows {#windows-v0-5-待发布}
 
-当前 v0.6.0 使用原生 SCM 服务与虚拟账号 `NT SERVICE\QQONPanel`。Program Files 程序目录只允许管理员/SYSTEM 修改，服务账号读取执行；ProgramData 私有数据仅允许管理员、SYSTEM 与服务身份访问。
+v0.7.0 使用原生 SCM；未授权时为 `NT SERVICE\QQONPanel`，仅独立同意才切 LocalSystem。Program Files 只允许管理员/SYSTEM 修改，受限服务账号读取执行；ProgramData 数据只允许管理员、SYSTEM 与当前授权的服务身份访问。
 
 受保护 ACL、所有者与重解析点检查失败时不静默放宽权限。已有开发目录不一定满足服务安装要求，不应让安装器自动接管不明目录。不要关闭 UAC、防病毒、执行策略或给 `Everyone` 完全控制；详见 [Windows 服务](./windows-services)。
 
 `qqon` 只维护固定面板服务，不提供任意 root／管理员命令执行。`status` 与 `url` 只读，不恢复事务或修改配置；具体权限见 [维护指南](./maintenance)。
 
-### v0.7 最高系统管理权限（预览开发中） {#system-management}
+### v0.7.0 最高系统管理权限 {#system-management}
 
-**尚未发布；有限 CI／隔离测试不是全平台安全验收。** 此模式不是受限身份加一个临时助手，而是面板进程本身以 Linux root／Windows LocalSystem 常驻。面板漏洞或管理员账户失陷可能影响整台主机；面向不可信租户的隔离托管不在本轮承诺内。
+**预览发行与有限 CI 不是全平台安全验收。** 此模式不是受限身份加临时助手，而是面板进程本身以 Linux root／Windows LocalSystem 常驻。面板漏洞或管理员账户失陷可能影响整台主机；不可信租户隔离不在本轮范围内。
 
 - 新装专用参数：`--accept-system-management`／`-AcceptSystemManagement`；已有安装通过新 `qqon privilege`（Windows 管理器 `-Maintenance privilege`）独立确认。交互短语为 `同意最高权限`。未同意维持 restricted；普通 yes/update 或已有管理员/root 权限不算同意。
 - Linux 同意记录固定在 `/etc/server-panel/management-consent.json`；Windows 固定在系统 ProgramData 的 `QQON-Panel\management-consent.json`，均在 data 之外，由受保护安装／迁移流程维护。网页无写入／授权接口；服务还要核对真实 root／LocalSystem 身份，不能通过复制 JSON、改路径或手动切服务身份代替授权。
@@ -55,7 +55,7 @@
 - 网站与面板必须使用不同的主机名，不能靠同一主机的不同端口隔离 Cookie。网站 PHP／代理和上传内容会影响业务，应只部署可信代码；不要上传面板账号、私钥或同意记录到网站根。
 - 系统包来源是管理员已配置的可信 APT/DNF 仓库，不执行源模板、不关闭包签名、TLS 或 SELinux。网站 TLS 只导入已有 PEM，非 ACME。
 
-Windows 即便获 LocalSystem 也不支持 Linux 软件安装／建站。接口前提、文件上限及本机检查不等于外网验收的边界见 [托管开发指南](./hosting)。
+Windows 即便获 LocalSystem 也不支持 Linux 软件安装／建站。接口前提、文件上限及本机检查不等于外网验收的边界见 [托管指南](./hosting)。
 
 ## 更新与归档
 
