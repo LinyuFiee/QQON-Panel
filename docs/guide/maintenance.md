@@ -42,7 +42,15 @@
 
 Linux 已确认语法为 `sudo qqon privilege [--accept-system-management] [--yes]`。不带专用标志时走交互同意；带 `--accept-system-management` 明确表达独立授权。**单独 `--yes` 不授权**；普通 `--upgrade`／`--update`／`--status`／`--migrate-manager` 与授权标志组合均拒绝，`qqon update/status` 也不能夹带授权。
 
-当前没有公开 v0.7 发行可升级，v0.6 只能受限安装。Linux 首轮隔离测试已通过，但真实 CI 与主机回退仍待验证，Windows 调用组合亦待验证。完整新装示例、protocol 5 透传与有限测试记录见 [v0.7 托管开发指南](./hosting#authorization)。
+Windows 已确认 `qqon privilege` 交互入口，以及 `qqon privilege --accept-system-management --yes` 显式同意入口。未追加 PATH 时，在管理员 PowerShell 中调用已安装的匹配 v0.7 管理器：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:ProgramFiles\QQON-Panel\install.ps1" -Maintenance privilege -AcceptSystemManagement -Yes
+```
+
+路径必须保留 PowerShell 双引号以展开环境变量并处理空格；此处 ExecutionPolicy 仅作用于子进程，仍须遵循组织授权。Windows 仅已知 v0.5/v0.6 先独立 Migrate、再 update、最后 privilege；无 Windows v0.4 支持，新装与迁移参数详见 [Windows 命令](./windows-services#privilege-commands)。
+
+当前没有公开 v0.7 发行可升级，v0.6 只能受限安装。最新合并 CI 的 Linux unit／race／真实托管和 Windows Go＋57 项 PowerShell 均已成功，但不能替代旧安装权限迁移／回退全验收；Windows 本机及 CI 中的 **57 项 TEMP/mock ACL/SCM** 均不是真实 LocalSystem 安装。对应提交与验证范围、Linux 新装示例及 protocol 5 边界见 [v0.7 托管开发指南](./hosting#verification)。
 
 ## 备份与事务
 

@@ -8,7 +8,7 @@
 >
 > **v0.4.0、v0.5.0、v0.6.0 均按预览版定位**，不代表稳定成熟或全平台实机验收完成；这些已发布版本没有真实业务软件安装、网站创建与部署能力。“应用与源”是配置／模板能力，不是应用已经安装。
 >
-> **v0.7 预览开发中，尚未发布，测试尚无最终结论。** 本轮开发显式授权 root／LocalSystem、Linux 软件安装与网站／文件／任务流程，见 [v0.7 托管开发指南](docs/guide/hosting.md)。不要为它构造 Release 下载地址，也不要把当前安装命令当作 v0.7 安装入口。
+> **v0.7 预览开发中，尚未发布。** 已有 Ubuntu 真实托管 CI 和 Windows 本机隔离测试记录，但不是全平台验收。本轮开发显式授权 root／LocalSystem、Linux 软件安装与网站／文件／任务流程，见 [v0.7 托管开发指南](docs/guide/hosting.md)。不要为它构造 Release 下载地址，也不要把当前安装命令当作 v0.7 安装入口。
 
 <a id="一键交互安装--v050"></a>
 
@@ -64,7 +64,12 @@ v0.4.0／v0.5.0／v0.6.0 没有真实软件安装、网站部署或文件编辑�
 - **Linux 网站**：静态、反向代理与 PHP 站点；写入受管配置后先 `nginx -t`、再 reload 与本机站点标记校验。文件只在受管站点根内，单次上传最多 2 MiB、UTF-8 文本编辑最多 256 KiB；删除站点保留网站文件。
 - **平台与证书限制**：Windows 即使授权 LocalSystem 也不支持上述 Linux 软件安装和 Nginx 建站；网站 TLS 为已有 PEM 证书／私钥导入，不是 ACME 自动签发或续期。面板 TLS 与网站 TLS 分开管理。
 
-以上是未发布开发范围，不是可下载安装或实机测试通过的承诺；命令前提、任务失败与恢复边界见 [托管开发指南](docs/guide/hosting.md)。
+以上能力仍未发布；匹配版本的命令前提与失败边界见 [托管开发指南](docs/guide/hosting.md)。本轮已验证范围如下，不外推为全平台或生产承诺：
+
+- **Ubuntu 真实托管 CI 通过**：[run #42379665605](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42379665605)，提交 `80fea3b505bc429541ba31ed2f1ac751debaaf9e`。覆盖缺包安装并启动 Nginx／PHP-FPM、静态／代理／PHP HTTP、上传编辑、网站停用／启用、损坏 Nginx 配置 fixture 的失败回退与重启、删除保留文件、认证／CSRF／同意撤销。
+- **Windows 本机 PowerShell 57/57**：install 23 + maintenance 18 + privilege 16；使用 TEMP 与 mock ACL/SCM，不是真实 LocalSystem／SCM 安装验收。
+- **最新全合并代码 CI 通过**：[run #42380757509](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42380757509)，提交 `fa1483f9ec57294d000a6f71014c4e6ee7afe87c`；Linux unit／race／真实托管及 Windows Go＋57 项 PowerShell 均成功，Windows 仍是隔离测试而非真实 SCM／LocalSystem 安装，v0.7 仍未发布。
+- **仍有明确空白**：MariaDB／Redis 仅 fake 逻辑测试，未真实安装；DNF 未真实验证；网站 HTTPS 导入仅单元／loopback 测试，未验证真实 Nginx HTTPS。GUI 仅登录截图通过，后续截图工具超时，未完成整体 GUI 验收。
 
 ## 轻量与安全
 
@@ -77,6 +82,8 @@ v0.4.0／v0.5.0／v0.6.0 没有真实软件安装、网站部署或文件编辑�
 - 更新不通过网页提权，不重置账户。SHA-256 校验不等同独立发布签名，仍须保护 GitHub 发布权限。
 
 低配资源占用需要在实际业务负载下测量。Go 堆、面板进程工作集／RSS 和主机总内存不能混为一个指标；Nginx、PHP-FPM、MariaDB、Redis 与用户业务的 RAM 属于工作负载，不计入“面板自身占用”，但会占用主机内存。面板低占用不代表装好网站与数据库后仍有相同内存余量。
+
+上述 `80fea3b505bc429541ba31ed2f1ac751debaaf9e` 的 Ubuntu CI 中，**5 次操作后短时采样**的面板进程 RSS 中位数与最大值均为 **15.42 MiB**。这是该次指定测试场景的数据，不移作后续 `fa1483f9…` CI 的测量，不包含业务进程内存，不是 SLA、soak 长时间运行测试或整套负载上限。
 
 ## 开发
 

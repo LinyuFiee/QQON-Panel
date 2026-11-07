@@ -1,7 +1,7 @@
 # v0.7 托管预览开发指南
 
-::: warning 尚未发布，测试尚无最终结论
-本页描述 **v0.7 预览开发中的**最高系统权限、Linux 软件安装、真实网站和任务流程，不是已上线功能、发行承诺或全平台验收报告。当前公开下载仍为 [v0.6.0 预览版](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.6.0)，[当前安装说明](./installation)不包含本页新接口；不要构造 v0.7 下载链接，或拿当前 v0.6 安装器尝试新参数。
+::: warning 尚未发布；有限验证不等于全平台验收
+本页描述 **v0.7 预览开发中的**最高系统权限、Linux 软件安装、真实网站和任务流程，不是已上线功能或发行承诺。已有特定提交的 Ubuntu 真实托管 CI、Windows 本机隔离测试等[有限验证记录](#verification)，尚非全平台验收。当前公开下载仍为 [v0.6.0 预览版](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.6.0)，[当前安装说明](./installation)不包含本页新接口；不要构造 v0.7 下载链接，或拿当前 v0.6 安装器尝试新参数。
 
 **v0.4.0／v0.5.0／v0.6.0 没有真实业务软件安装和网站创建／部署能力。** 这些已发布版本的“应用与源”配置／模板不能当作软件已安装或网站已上线。
 :::
@@ -18,7 +18,7 @@
 
 ### 独立同意与命令边界
 
-以下为本轮未发布开发接口，需匹配的程序与管理器。Linux 命令形态和参数边界已确认，首轮隔离测试通过；真实 CI／主机验收仍待验证，Windows 调用组合亦待验证。这不是给当前 v0.6 下载追加参数的教程。
+以下为本轮未发布开发接口，需匹配的程序与管理器。Linux、Windows 的命令形态已确认，但验证层次不同：Ubuntu 真实托管 CI 只覆盖[列出的场景](#verification)，Windows 本机 57 项及后续 CI 中的同组测试仍采用 TEMP/mock ACL/SCM，不是真实 LocalSystem／SCM 安装验收。这不是给当前 v0.6 下载追加参数的教程。
 
 | 场景 | 专用接口 | 不能替代的同意 |
 | --- | --- | --- |
@@ -55,6 +55,14 @@ sudo bash install.sh --mode local --yes --accept-system-management
 - 普通 `--upgrade`、`--update`、`--status`、`--migrate-manager` 与授权标志组合均拒绝；`qqon update/status` 也不能附带授权标志。
 - Linux 开发 bootstrap 已识别安装器 **protocol 5** 并转发参数；这只是协议兼容性，不代表 v0.7 已发布或线上 Pages 已部署该开发入口。固定已发布 v0.6 安装器仍保留受限行为。
 - 安装器 protocol 5、安装管理记录 format3、发行清单 format3 和用户数据 schema 1 各有独立含义，不可互换。
+
+#### Windows 已确认命令（仅匹配的预览开发环境）
+
+在管理员 PowerShell 中，新管理器／程序已就绪后，可运行 `qqon privilege` 并按提示输入 `同意最高权限`，或在已阅读告知后运行 `qqon privilege --accept-system-management --yes`。Windows 包装入口接受双横线参数，直接调用安装器则用 `-Maintenance privilege -AcceptSystemManagement -Yes`，不要混写两种语法。
+
+完整的带引号 PowerShell 路径调用、新装 `-Action Install -Version v0.7.0 -AccessMode local -Port 8443 -AcceptSystemManagement -Yes` 示例见 [Windows 服务命令](./windows-services#privilege-commands)。已知 Windows v0.5/v0.6 管理器先通过已校验的 v0.7 脚本 `-Action Migrate -Version v0.7.0 -MigrateLegacy -Yes` 独立迁移，再 `qqon update`、确认受限程序健康，最后单独 privilege；**无 Windows v0.4 支持**。`-MigrateLegacy` 同意的是管理器迁移，不是 LocalSystem 授权。
+
+这些命令已在本机隔离环境验证，后续合并 CI 的同组 57 项也已通过；两者都不代表真实 LocalSystem／SCM 安装。当前公共下载仍为 v0.6，不能从不存在的 v0.7 Release 下载安装。
 
 未完成事务先恢复；未知或被修改的管理器不能强制接管。具体顺序见 [升级与迁移](./upgrade-migration#privilege-migration)。
 
@@ -129,7 +137,9 @@ v0.7 开发中的**安装管理记录**为 format3，新增 `privilegeMode`／`p
 
 ## 网站 TLS 是导入，不是 ACME {#site-tls}
 
-网站 TLS 使用 `POST /api/sites/{id}/tls` 导入管理员已有的 PEM 证书链与私钥；需当前 revision 和明确确认，按任务更新 Nginx。证书须在有效期内、与私钥匹配，至少覆盖配置的首个域名；管理员还应确认所有实际服务的域名均被证书 SAN 覆盖。端口与 TLS 配置必须兼容，失败停止并显示原因。
+网站 TLS 使用 `POST /api/sites/{id}/tls` 导入管理员已有的 PEM 证书链与私钥；需当前 revision 和明确确认，按任务更新 Nginx。证书须在有效期内、与私钥匹配，**对站点配置的每一个域名／IP 都通过 SAN 主机校验**，不再只验证首个域名；任一域名未覆盖即拒绝。端口与 TLS 配置必须兼容，失败停止并显示原因。
+
+当前网站 HTTPS 导入仅完成单元／loopback 测试，**尚未验证真实 Nginx HTTPS**；Ubuntu 真实站点 HTTP 成功不能作为导入证书后的 HTTPS 验收。
 
 证书最多 **64 KiB**、私钥最多 **16 KiB**，导入载荷另有上限。私钥保存在面板受保护的私有证书目录，不在网站根；不回传、不写任务日志，也不把 PEM 保存在重启后任务描述中。备份仍可能包含证书，需要私密保存。
 
@@ -155,13 +165,31 @@ v0.7 开发中的**安装管理记录**为 format3，新增 `privilegeMode`／`p
 - **工作负载**：Nginx、PHP-FPM worker、MariaDB、Redis、代理 upstream 与用户程序分别占用内存，不计入面板进程自身指标。
 - **主机总量**：包含面板、业务、操作系统及缓存；装更多软件、增大 worker／数据库缓存会减少可用内存。
 
-“轻量面板”不是“整套网站和数据库几乎不占 RAM”。应测量实际并发与数据负载，分别记录面板／业务／主机内存；本轮没有低配全负载保证或全平台实测结论。
+“轻量面板”不是“整套网站和数据库几乎不占 RAM”。前一次提交 `80fea3b505bc429541ba31ed2f1ac751debaaf9e` 对应 Ubuntu CI 的**5 次操作后短时采样**中，面板进程 RSS 中位数与最大值均为 **15.42 MiB**；不移作后续合并 CI 的测量。这是指定操作场景下的面板数据，不含 Nginx／PHP／数据库等业务进程，不是 SLA、soak 长时间运行测试、全套负载上限或所有平台资源保证。仍须在实际并发与数据负载下分别测量面板／业务／主机内存。
 
-## 当前验收与非目标
+## 当前验收与非目标 {#verification}
 
-**v0.7 未发布，测试尚未形成最终结论。** 维护者报告的 Linux 安装器首轮隔离测试为 **135 项通过，其中 10 项 privilege 测试**；覆盖普通 `--yes` 不授权、准确确认短语、新装 root、旧安装权限迁移、root 启动失败回退、日志属主／原停止状态恢复，以及已知 v0.6 管理器迁移后仍保持 restricted。这些是本轮开发中的隔离测试记录，不是本页执行了真实安装，也不代表真实 CI、APT/DNF、systemd 或全平台验收。
+**v0.7 仍未发布，以下有限结果不构成全平台验收。** 最新全合并代码 [CI #42380757509](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42380757509) 已成功，提交 `fa1483f9ec57294d000a6f71014c4e6ee7afe87c`；Linux unit／race／真实托管及 Windows Go＋57 项 PowerShell 全部成功，Windows 仍非真实 SCM／LocalSystem 安装；下节保留此前 `80fea3b…` 的独立场景与 RSS 记录。
 
-仍需对固定提交完成真实 CI 与主机验证：安装器和已安装维护入口、权限确认／回退、真实 APT/DNF、静态和代理内容、PHP 实际执行、上传编辑冲突、Nginx 失败恢复、证书导入与重启持久性。Windows LocalSystem/ACL 和不同 Linux 发行版／SELinux 必须独立验证，不能用临时目录模拟或单一 Ubuntu runner 代替。
+### Ubuntu 真实托管 CI
+
+[run #42379665605](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42379665605) 已成功，固定提交为 `80fea3b505bc429541ba31ed2f1ac751debaaf9e`。测试在专用 Ubuntu CI 环境真实执行：
+
+- 缺包安装 Nginx `1.24.0-2ubuntu7.19` 和 PHP `8.3.6-0ubuntu0.24.04.13`，再检查／启动服务；不改变 `install` 不额外 enable/start 的接口边界。
+- 静态、反向代理、PHP 网站的实际 HTTP 内容；上传与编辑；站点停用／启用。
+- 故意损坏 Nginx 配置的 fixture 触发失败回退及重启检查；删除站点后保留文件。
+- 认证、CSRF 和管理同意撤销检查。
+
+这不是程序 Release 发布，也不是任意生产网站、公网连通、所有业务负载或完整旧机权限迁移验收。站点“启用”也不是业务软件的 `systemctl enable` 自动开机承诺。
+
+### 隔离测试与其余空白
+
+- **Windows PowerShell 本机 57/57**：install 23、maintenance 18、privilege 16，均在 TEMP/mock ACL/SCM 环境；同组 57 项随后也在最新合并 CI 成功。两者均不是真实 LocalSystem、SCM 注册或完整 NTFS ACL 验收。
+- **Linux 安装器历史首轮隔离测试 135 项通过，含 10 项 privilege**：普通 `--yes` 不授权、准确确认短语、新装 root、旧安装权限迁移、root 启动失败回退、日志属主／原停止状态恢复，以及已知 v0.6 管理器迁移后仍 restricted；与上述 Ubuntu 真实包／HTTP 测试分开记录。
+- **MariaDB／Redis 仅 fake 逻辑测试，未真实安装；DNF 未真实测试。** 不由 Nginx／PHP 或 Ubuntu 的结果推导其通过。
+- 网站证书按**所有站点域名**校验，导入仅有单元／loopback 测试，**真实 Nginx HTTPS 尚未验证**；非 ACME。
+- **GUI 仅登录截图通过**。后续 screenshot 工具超时，软件／网站／任务的完整 GUI 操作与截图验收未完成，不能因 API／HTTP 测试通过就称 GUI 通过。
+- Windows 真实 LocalSystem/ACL、不同 Linux 发行版／架构／SELinux、完整旧管理器迁移与权限回退、物理故障恢复和长期负载仍需独立验收。
 
 本地 Windows 开发主机不执行真实包安装、SCM／PATH／ACL 修改；真实主机操作应仅在获准的专用隔离测试环境内进行，不连接或改动既有业务服务器。后续新 Release 仍须另行确认确切提交；本地文档构建不发布网站或程序。
 

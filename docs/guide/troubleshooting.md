@@ -2,7 +2,7 @@
 
 ## 提示需要新版或不兼容 Release {#pending-release}
 
-**当前已发布预览版为 [v0.6.0](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.6.0)**。仍提示版本不兼容、缺少 Windows 附件或需要新版时，先停止并查看 [发布状态](./releases)，核对来源、版本及是否仍使用旧 v0.4/v0.5 管理器；旧版升级需 [显式迁移管理器](./upgrade-migration#manager-migration)。v0.7 预览仍在开发、未发布、测试未定，不能靠改下载链接或给旧脚本加新参数获得托管能力。
+**当前已发布预览版为 [v0.6.0](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.6.0)**。仍提示版本不兼容、缺少 Windows 附件或需要新版时，先停止并查看 [发布状态](./releases)，核对来源、版本及是否仍使用旧 v0.4/v0.5 管理器；旧版升级需 [显式迁移管理器](./upgrade-migration#manager-migration)。v0.7 预览仍在开发、未发布；已有有限 CI／隔离测试，不等于全平台验收，不能靠改下载链接或给旧脚本加新参数获得托管能力。
 
 版本/协议不兼容不是反复重试能解决的问题。不要把 `latest` 改成不存在的版本、下载任意分支安装器、改清单格式或跳过摘要检查；网络下载失败则按下一节排查。Pages 部署与程序 Release 仍是独立流程。
 
@@ -74,7 +74,7 @@ sc.exe queryex QQONPanel
 
 ## v0.7 软件／网站／任务问题（预览开发中） {#hosting-preview}
 
-当前 v0.4／v0.5／v0.6 没有真实软件安装或建站，v0.7 尚未发布、测试未定；旧版看不到新能力不是安装失败。以下仅供匹配本轮开发程序与管理器的隔离测试使用，详见 [托管开发指南](./hosting)。
+当前 v0.4／v0.5／v0.6 没有真实软件安装或建站，v0.7 尚未发布；已有有限 CI／隔离测试，不代表完整验收。旧版看不到新能力不是安装失败。以下仅供匹配本轮开发程序与管理器的隔离预览环境使用，详见 [托管开发指南](./hosting)。
 
 - **管理权限不可用**：检查实际 root／LocalSystem 身份与受保护固定同意记录；普通 yes/update 不授权。按匹配的新 `qqon privilege` 流程独立同意，不手写记录、复制别处 JSON 或改服务身份绕过。
 - **Windows 软件／网站不可用**：这是明确的平台边界；LocalSystem 不提供 Linux APT/DNF 或 Nginx 建站，不能靠继续提权解决。
@@ -82,7 +82,7 @@ sc.exe queryex QQONPanel
 - **安装成功但服务未运行／网站提示 Nginx 未运行或无可用 PHP runtime**：`install` 只安装并查询，不额外 `enable`／`start`。APT postinst 常启动服务，DNF 未必；先在软件页查看实际状态，显式 `start` Nginx，PHP 站点还需 `start` PHP-FPM，等待启动任务成功、刷新确认运行后再建站。安装成功不是已运行，`start` 成功也不是开机自启承诺，无需为启动而重复安装。
 - **网站创建或更新失败**：检查 Nginx／PHP-FPM 实际依赖、revision、域名／面板主机隔离、端口与 `nginx -t`／reload 诊断。只操作受管配置，不覆盖主配置或未知站点。任务接受和本机标记成功都不等于外网可达。
 - **文件被拒绝**：上传上限 2 MiB、文本编辑上限 256 KiB UTF-8；只接受受管根内安全普通文件。同名上传或 SHA-256 冲突应重读，不能强制覆盖；不解压归档。
-- **TLS 导入失败**：核对 PEM、大小、有效期、域名 SAN、私钥匹配与站点端口；不要把私钥贴进日志。网站 TLS 不是 ACME，`qqon tls renew` 不续期网站证书。
+- **TLS 导入失败**：核对 PEM、大小、有效期、私钥匹配与站点端口；证书必须覆盖**所有站点域名／IP**，任一 SAN 主机校验失败即拒绝，不是只查首个域名。不要把私钥贴进日志。网站 TLS 不是 ACME，`qqon tls renew` 不续期网站证书；当前仅单元／loopback 测试，不应将 Ubuntu HTTP 通过视为真实 Nginx HTTPS 已验收。
 - **任务中断或队列满**：先看已有任务，重启后 interrupted 不会自动重放；核对实际系统与事务恢复状态后再决定重试。失败可能已部分修改主机，不等于回到原状。
 - **删除后磁盘仍有文件**：站点删除刻意保留 webroot，不提供本轮递归数据删除。软件 RAM 属于业务负载，不是面板自身指标异常。
 

@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | 普通程序升级 | 在兼容的管理器与数据格式下切换到已发布的新程序 | 不会自动替换安装器、切换公网、授予 root/LocalSystem、降级或做任意数据迁移 |
 | 管理器迁移 | 显式更新已知旧安装器/配置，使其理解新安装记录与维护能力 | 不会自动接管手动安装或被修改的脚本，也不代替最高权限同意 |
-| 最高权限迁移（v0.7 开发中） | 独立同意后改变服务身份和相关私有权限／记录 | 普通 yes/update、root 或管理员身份本身均不构成授权；尚未发布与验收 |
+| 最高权限迁移（v0.7 开发中） | 独立同意后改变服务身份和相关私有权限／记录 | 普通 yes/update、root 或管理员身份本身均不构成授权；未发布，有限测试不等于完整迁移验收 |
 | 数据迁移 | 数据结构变更时的独立计划 | 不属于当前 schema 1 普通升级/回退承诺 |
 
 发行清单仍为 format3、数据 schema 为1；v0.6 安装管理记录为 format2，三者不是同一个格式版本。v0.6 面板网页不获得管理员/root 权限；v0.7 即使开发中的服务可经授权以 root/LocalSystem 运行，也不能从网页授予同意或执行任意命令。重启会使内存会话失效，账户、TOTP 和私有配置应保留。
@@ -46,13 +46,38 @@ v0.4.0 管理器验证 format2 与六个固定附件，不能直接消费 v0.5/v
 
 ## v0.4 / v0.5 / v0.6 → v0.7 授权迁移（开发中） {#privilege-migration}
 
-**v0.7 尚未发布，测试尚无最终结论。** 当前公共下载仍为 v0.6.0，不存在可在本页保证下载的 v0.7 管理器。以下是联调顺序与边界，不应拿可变 `main` 脚本在现有业务机试跑。
+**v0.7 尚未发布；已有有限验证，不代表完整迁移验收。** 当前公共下载仍为 v0.6.0，不存在可在本页保证下载的 v0.7 管理器。以下命令仅供已有已校验脚本／匹配程序来源的隔离预览环境，不应拿可变 `main` 脚本在现有业务机试跑。
 
-1. 核对旧版本来源、管理器固定摘要、安装记录、真实服务身份和未完成事务；只迁移被识别的官方 v0.4/v0.5/v0.6，未知或修改过的管理器停止接管。
+### Linux
+
+1. 核对旧版本来源、管理器固定摘要、安装记录、真实服务身份和未完成事务；只迁移被识别的官方 Linux v0.4/v0.5/v0.6，未知或修改过的管理器停止接管。
 2. 通过匹配版本的新管理器独立迁移管理记录与维护入口，保留访问、账号和原受限身份；普通更新不能当作最高权限授权。
-3. Linux 通过 `sudo qqon update` 单独升级到不低于 v0.7.0 的匹配程序，**仍为 restricted**，在原访问配置和受限身份下确认健康。当前并无公开 v0.7 发行可升级；Linux 开发接口已有首轮隔离测试，真实 CI／主机迁移仍待验证，Windows 组合也须以匹配管理器帮助和验证结果为准。
-4. 确需系统管理时，再通过 `sudo qqon privilege` 独立同意，交互输入 `同意最高权限`；已阅读告知后可用 `sudo qqon privilege --accept-system-management --yes` 明确授权。单独 `--yes` 不授权；普通 `--upgrade`／`--update`／`--status`／`--migrate-manager` 均拒绝夹带授权标志。Windows 新装专用参数为 `-AcceptSystemManagement`，不能套用 Linux 参数。
+3. Linux 通过 `sudo qqon update` 单独升级到不低于 v0.7.0 的匹配程序，**仍为 restricted**，在原访问配置和受限身份下确认健康。当前并无公开 v0.7 发行可升级；开发接口已有隔离测试，Ubuntu 真实托管 CI 不等于完整旧机权限迁移／回退通过。
+4. 确需系统管理时，再通过 `sudo qqon privilege` 独立同意，交互输入 `同意最高权限`；已阅读告知后可用 `sudo qqon privilege --accept-system-management --yes` 明确授权。单独 `--yes` 不授权；普通 `--upgrade`／`--update`／`--status`／`--migrate-manager` 均拒绝夹带授权标志。
 5. 授权迁移须停服取得一致备份，用事务保护服务身份、数据所有权/ACL、固定同意记录和安装配置；失败恢复原状态并保留诊断，不重置账号。授权后还须确认实际 root／LocalSystem 与同意状态，不能只看命令退出码。
+
+### Windows v0.5 / v0.6 → v0.7 {#windows-v07-migration}
+
+**没有 Windows v0.4 安装或迁移支持。** 仅处理已识别官方 v0.5/v0.6 管理器，未知或改写的脚本拒绝接管。下面的 `install.ps1` 必须是**已校验的本地 v0.7 开发脚本**，不是公开 v0.6 下载；命令还要求匹配的已验证程序来源，当前没有公开 v0.7 Release，不可为此跳过来源／版本验证。
+
+1. 在管理员 PowerShell 中，先独立迁移管理器，保留原访问、账号和受限身份：
+
+   ```powershell
+   & .\install.ps1 -Action Migrate -Version v0.7.0 -MigrateLegacy -Yes
+   ```
+
+   `-MigrateLegacy` 明确同意的是旧管理器迁移，`-Yes` 仅确认普通操作；不在此步骤附加 `-AcceptSystemManagement`，不把迁移当作提权。
+
+2. 确认管理器迁移完成后，单独运行 `qqon update`，先核对新程序在原访问方式和受限身份下健康。
+3. 确需 LocalSystem 时，才运行 `qqon privilege` 并输入 `同意最高权限`，或已阅读告知后显式执行：
+
+   ```powershell
+   qqon privilege --accept-system-management --yes
+   ```
+
+   没有 PATH 入口时，使用[带引号的完整 PowerShell 管理器调用](./windows-services#privilege-commands)。授权迁移的停服备份、ACL／服务身份恢复和同意记录保护不能省略。
+
+Windows 本机 **57/57（install 23、maintenance 18、privilege 16）** 使用 TEMP/mock ACL/SCM，同组测试随后也在最新合并 CI 通过；这些只证明相应隔离断言，不是真实 LocalSystem／SCM 安装，真实权限迁移／回退仍需专用机器验证。
 
 v0.7 安装管理记录的 format3 新增 `privilegeMode`／`privilegeConsent`；旧 format1/2 默认 restricted，不因普通升级或配置操作变为 system。Windows 的 LocalSystem 授权不意味着支持 Linux 软件／网站。更多限制见 [托管开发指南](./hosting#authorization)。
 

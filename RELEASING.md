@@ -29,7 +29,7 @@
 
 ## v0.7 预览开发中：授权管理与托管
 
-**尚未发布，测试尚无最终结论。** 不能把开发提交、文档构建或临时环境测试写成已上线／全平台验收；当前下载仍指向 v0.6.0，不创建虚构的 v0.7 Release／附件链接。用户仍需针对确切提交另行确认新发行。
+**尚未发布；已有有限验证，不代表全平台验收。** 不能把开发提交、文档构建或特定临时环境测试写成已上线／全平台通过；当前下载仍指向 v0.6.0，不创建虚构的 v0.7 Release／附件链接。用户仍需针对确切提交另行确认新发行。
 
 本轮开发范围见 [托管指南](docs/guide/hosting.md)：
 
@@ -41,7 +41,20 @@
 
 Linux 开发接口已确认：`sudo qqon privilege [--accept-system-management] [--yes]`；新装仅本机示例为 `sudo bash install.sh --mode local --yes --accept-system-management`，要求匹配程序不低于 v0.7.0。普通升级／状态／管理器迁移参数不能夹带授权。开发 bootstrap 支持 protocol 5 透传，不使已发布 v0.6 获得最高权限；完整前提见 [托管指南](docs/guide/hosting.md)。
 
-维护者报告 Linux 安装器首轮 **135 项隔离测试通过，其中 10 项 privilege 测试**；这是开发阶段有限结果，不是已完成真实 CI／主机验收。发布前仍需验证安装器与已安装 `qqon`、旧管理器迁移、权限同意与回退、真实 APT/DNF、Nginx/PHP 内容与文件/TLS任务、重启持久性，以及 Windows LocalSystem/ACL 行为。只在隔离临时环境验收，不把开发主机或既有业务服务器作为默认测试目标；不能用旧 v0.6 CI 记录填充本轮结果。
+Windows 开发入口已确认：`qqon privilege` 或 `qqon privilege --accept-system-management --yes`，完整 PowerShell 调用和新装示例见 [Windows 服务](docs/guide/windows-services.md#privilege-commands)。Windows 仅支持已知 v0.5/v0.6 管理器先显式 `-Action Migrate -Version v0.7.0 -MigrateLegacy -Yes`，再 `qqon update`、最后独立 privilege；无 Windows v0.4 支持。新装专用 `-AcceptSystemManagement`、普通 `-Yes` 与迁移 `-MigrateLegacy` 不得混为一种同意。
+
+### 本轮已验证与待验证
+
+最新全合并代码 [CI #42380757509](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42380757509) 已成功，提交 `fa1483f9ec57294d000a6f71014c4e6ee7afe87c`；Linux unit／race／真实托管及 Windows Go＋57 项 PowerShell 全部成功，但 Windows 仍非真实 SCM／LocalSystem 安装，v0.7 仍未发布。
+
+- **Ubuntu 真实托管 CI 成功**：[run #42379665605](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42379665605)，提交 `80fea3b505bc429541ba31ed2f1ac751debaaf9e`。实际缺包安装并启动 Nginx `1.24.0-2ubuntu7.19`、PHP `8.3.6-0ubuntu0.24.04.13`；覆盖静态／代理／PHP HTTP、上传编辑、网站停用／启用、损坏 Nginx 配置 fixture 的失败回退与重启、删除保留文件、认证／CSRF／同意撤销。这不是程序 Release 发布。
+- **Windows PowerShell 本机 57/57**：install 23、maintenance 18、privilege 16。原记录为本机 TEMP/mock ACL/SCM，随后同组 57 项也在上述最新 CI 成功；两者均不是真实 LocalSystem、SCM 注册或完整 ACL 验收。
+- **Linux 安装器历史首轮 135 项隔离测试**（含 10 项 privilege）保留为阶段记录，不等于真实旧机迁移／恢复验收，也不与 Ubuntu 实际包安装测试混计。
+- **短时 RAM 记录**：前一次 `80fea3b505bc429541ba31ed2f1ac751debaaf9e` 对应 Ubuntu CI 的 5 次操作后采样中，面板进程 RSS 中位数与最大值均为 **15.42 MiB**；不移作后续合并 CI 的测量，不包含 Nginx/PHP 等业务进程，不是 SLA、soak 长时间运行或全负载结论。
+- **尚未验证**：MariaDB／Redis 仅 fake 逻辑测试、未真实安装；DNF 未真实测试；网站证书导入已按所有站点域名校验，但 HTTPS 仅单元／loopback 测试，未验证真实 Nginx HTTPS。
+- **GUI 不完整**：仅登录截图通过，后续 screenshot 工具超时，不能宣称软件／网站／任务 GUI 全流程验收。
+
+发布前仍需按确切提交补充上述空白、真实旧管理器迁移与权限回退、逐平台 ACL／SELinux 和故障恢复。只在获准的隔离测试环境验收，不把开发主机或既有业务服务器作为默认测试目标；旧 v0.6 CI 与本轮结果分开记录。
 
 ## 文档与程序分开发布
 

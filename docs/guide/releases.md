@@ -5,7 +5,7 @@
 ::: warning 预览定位与未发布能力
 **v0.4.0、v0.5.0、v0.6.0 均为预览版**，保留官方已发布事实，不代表稳定成熟或全平台实机验收。三个版本均没有真实业务软件安装、网站创建／部署或网站文件编辑；“应用与源”配置／模板不等于软件已经安装。
 
-**v0.7 预览开发中，尚未发布，测试尚无最终结论。** 新的最高权限授权、Linux 软件／网站／任务流程见 [托管开发指南](./hosting)，不要将这些开发接口套用到当前下载，也不要构造 v0.7 Release／附件链接。
+**v0.7 预览开发中，尚未发布；已有有限测试结果，不代表全平台验收。** 新的最高权限授权、Linux 软件／网站／任务流程及验证范围见 [托管开发指南](./hosting)，不要将这些开发接口套用到当前下载，也不要构造 v0.7 Release／附件链接。
 :::
 
 维护者已将历史 GitHub Release v0.4.0／v0.5.0／v0.6.0 的标题与说明修正为预览定位，并核对原 tag／目标提交、资产 ID／大小／摘要、发布时间及 draft／prerelease 标志未变，`latest` 仍为 v0.6.0。文字标识修正不新增或覆盖发行资产，也不表示 v0.7 已发布。
@@ -59,9 +59,21 @@ v0.6.0 发行协议为 **format3**，数据 schema 为 **1**；安装管理记�
 
 本轮开发范围为独立同意后的 Linux root／Windows LocalSystem 服务身份、Linux 白名单软件安装与服务动作、Nginx 静态／代理／PHP 网站、有限文件上传编辑、已有证书导入和共享后台任务。Windows 不支持这些 Linux 软件与建站功能；软件源模板不替代主机现有可信 APT/DNF 源，TLS 导入不是 ACME，面板自身内存不包含业务软件内存。
 
-**尚无已发布 v0.7 程序，也没有本轮最终测试结论。** 维护者报告 Linux 安装器首轮 **135 项隔离测试通过（含 10 项 privilege 测试）**，Linux 独立授权命令及 protocol 5 参数转发已明确；这不代表真实 CI 或主机安装已验证。具体接口与测试边界见 [托管开发指南](./hosting#authorization)。
+**尚无已发布 v0.7 程序，以下是按环境区分的有限验证记录。**
 
-真实包管理器和 HTTP/PHP 内容、网站配置失败回退、已安装入口与权限迁移的真实 CI／主机联调、Windows LocalSystem/ACL 等仍需逐项验证。文档构建、模拟测试或单个 Linux runner 不等于全平台通过，旧 v0.6 CI 不作本轮证据。
+最新全合并代码 [CI #42380757509](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42380757509) 已成功，提交 `fa1483f9ec57294d000a6f71014c4e6ee7afe87c`；Linux unit／race／真实托管及 Windows Go＋57 项 PowerShell 全部成功，Windows CI 仍是隔离测试而非真实 SCM／LocalSystem 安装；下述 `80fea3b…` 的 15.42 MiB 保留为前一次独立测量，不移作本次结果。
+
+| 验证层次 | 已确认结果 | 不能外推的范围 |
+| --- | --- | --- |
+| Ubuntu 真实托管 CI | [run #42379665605](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42379665605) 成功，提交 `80fea3b505bc429541ba31ed2f1ac751debaaf9e`；缺包安装并启动 Nginx `1.24.0-2ubuntu7.19`、PHP `8.3.6-0ubuntu0.24.04.13`；静态／代理／PHP HTTP、上传编辑、站点停用／启用、损坏 Nginx 配置 fixture 回退与重启、删除保留文件、认证／CSRF／同意撤销 | 不代表所有 Linux 发行版／架构、DNF、完整旧机迁移或真实 Nginx HTTPS 通过 |
+| Windows PowerShell 本机及后续 CI | 本机 **57/57**：install 23 + maintenance 18 + privilege 16；同组 57 项在最新合并 CI 也成功，仍为 TEMP/mock ACL/SCM | 不是真实 LocalSystem／SCM／ACL 安装验收 |
+| Linux 安装器首轮隔离记录 | 历史 **135 项通过，含 10 项 privilege** | 不与真实主机测试混计，不能替代完整迁移／故障恢复 |
+| 网站证书导入 | 校验全部站点域名；单元／loopback 测试 | **尚未真实 Nginx HTTPS 验收**，也不是 ACME |
+| GUI | 仅登录截图通过 | 后续 screenshot 工具超时，整体 GUI 流程未完成 |
+
+MariaDB／Redis 仅 fake 逻辑测试，未真实安装；DNF 未真实测试。前一次提交 `80fea3b505bc429541ba31ed2f1ac751debaaf9e` 对应 Ubuntu CI 的 5 次操作后短时采样中，面板 RSS 中位数与最大值均为 **15.42 MiB**，不含业务进程，不是 SLA、soak 或全套负载结论；不将该数据归到后续合并 CI。
+
+Linux／Windows 授权命令、新装与迁移前提见 [托管开发指南](./hosting#authorization)；完整验证边界见 [支持矩阵](./support-matrix#hosting-preview)。旧 v0.6 发布 CI 不作本轮证据，单个 Ubuntu runner 也不代表全平台验收。
 
 开发约定中，发行清单仍为 format3 九资产、数据 schema 仍为1；**安装管理记录**升级为 format3，增加 `privilegeMode`／`privilegeConsent`，与发行清单同名格式号无关。旧 format1/2 默认 restricted，普通 yes/update 不授权；另见 [权限与迁移](./hosting#authorization)。
 

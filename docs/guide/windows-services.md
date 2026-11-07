@@ -69,12 +69,46 @@ Start-Service -Name QQONPanel
 
 ## v0.7 LocalSystem 授权（未发布） {#system-management}
 
-本轮预览开发增加**独立同意后**以 LocalSystem 运行面板的路径，不是已上线能力或真实 SCM/ACL 验收结论。新装专用参数为 `-AcceptSystemManagement`；已有安装经新管理器的 `qqon privilege`／`-Maintenance privilege` 单独迁移。交互提示后须输入 `同意最高权限`，普通 `-Yes`、`qqon update`、管理员启动、PATH 同意均不能替代。
+本轮预览开发增加**独立同意后**以 LocalSystem 运行面板的路径，不是已上线能力或真实 SCM/ACL 验收结论。Windows PowerShell 本机隔离测试 **57/57 通过（install 23、maintenance 18、privilege 16）**，使用 TEMP 与 mock ACL/SCM；后续 [合并 CI #42380757509](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42380757509)（`fa1483f9ec57294d000a6f71014c4e6ee7afe87c`）的 Windows Go＋同组 57 项也已成功，仍不是真实 LocalSystem／SCM 安装。
+
+新装专用参数为 `-AcceptSystemManagement`；已有安装经新管理器的 `qqon privilege`／`-Maintenance privilege` 单独迁移。交互提示后须输入 `同意最高权限`，普通 `-Yes`、`qqon update`、管理员启动、PATH 同意均不能替代。
 
 未授权继续使用虚拟服务账号。授权后需要实际 LocalSystem 身份与固定 `%ProgramData%\QQON-Panel\management-consent.json` 同意记录；记录在 data 之外，ACL 只允许 Administrators/SYSTEM，不能从网页生成、拷贝或手改来“开启”。迁移须保护账号／私钥、服务身份、旧虚拟 SID 与嵌套数据 ACL 的变更及恢复；不能只改 `sc.exe config` 就声称授权迁移完成。
 
 LocalSystem 拥有整机权限，面板失陷可能影响整台主机；它**不使 Windows 支持 Linux 软件安装和 Nginx 静态／代理／PHP 建站**。新管理器命令前提、受限默认和待验收范围见 [托管开发指南](./hosting#authorization)。当前公共下载仍是 v0.6.0，请勿给旧脚本混用这些参数。
 
+### 已确认命令（仅匹配的 v0.7 开发环境） {#privilege-commands}
+
+在**管理员 PowerShell**中、匹配的新管理器和程序已安装且原受限模式健康后，选择一种授权方式：
+
+```powershell
+# 交互方式：阅读告知并输入“同意最高权限”
+qqon privilege
+
+# 已阅读告知后，使用独立授权标志
+qqon privilege --accept-system-management --yes
+```
+
+没有把 `qqon` 加入 PATH 时，可直接调用已安装的匹配管理器：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:ProgramFiles\QQON-Panel\install.ps1" -Maintenance privilege -AcceptSystemManagement -Yes
+```
+
+以上是在 PowerShell 中执行，`$env:ProgramFiles` 放在双引号内才能正确展开并保留路径中的空格，也可按组织批准的执行策略用 `&` 调用已审阅脚本。`-ExecutionPolicy Bypass` 只作用于该次子进程，不修改系统全局策略，也不代替组织授权。单独 `--yes`／`-Yes` 和普通 update 均不授权。
+
+对**新安装**，仅在已有经过校验的本地 v0.7 开发安装器及匹配程序来源时，使用以下仅本机模式示例；路径中的 `install.ps1` 不是当前公开 v0.6 脚本：
+
+```powershell
+& .\install.ps1 -Action Install -Version v0.7.0 -AccessMode local -Port 8443 -AcceptSystemManagement -Yes
+```
+
+当前 v0.7 尚未发布。该示例说明参数组合，不表示公开 Release 已存在，也不能靠这条命令生成不存在的发行；没有匹配的已验证来源时不要运行或绕过下载校验。
+
+Windows 旧管理器仅识别 **v0.5／v0.6**，**没有 Windows v0.4 安装或迁移支持**。先从已校验的 v0.7 开发脚本执行 `-Action Migrate -Version v0.7.0 -MigrateLegacy -Yes`，保留受限身份和原访问；再单独 `qqon update`，确认程序健康后才 `qqon privilege`。`-MigrateLegacy` 是显式旧管理器迁移同意，`-Yes` 不是最高权限同意；完整操作前提见 [升级与迁移](./upgrade-migration#windows-v07-migration)。
+
 ## 验证范围
 
-Windows CI 与新增 maintenance 隔离测试已通过，但临时目录模拟、ZIP/JSON 解析和 runner 单元测试不能证明真实 SCM/虚拟账号/Program Files ACL 已通过。具体桌面/Server 版本的真实安装、重启、权限、升级、回退、异常停止和物理故障恢复仍未验证，需专用测试机验收；完整范围见 [支持矩阵](./support-matrix)。
+v0.6 的历史 Windows CI 成功与本轮测试分开记录。本轮已验证 **Windows PowerShell 本机 57/57**：install 23、maintenance 18、privilege 16，均为 TEMP/mock ACL/SCM；随后合并 CI 的 Windows Go＋同组 57 项也已成功。**这些仍不是真实 LocalSystem／SCM／Program Files ACL 验收**，不把隔离测试扩写为宿主真实安装。
+
+具体桌面/Server 版本的真实安装、重启、权限、升级、回退、异常停止和物理故障恢复仍未验证，需专用测试机验收；完整范围见 [支持矩阵](./support-matrix)。

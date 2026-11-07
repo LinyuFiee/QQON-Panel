@@ -2,7 +2,7 @@
 
 **[v0.6.0 预览版已发布](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.6.0)**，提供 Linux APT/DNF 与 Windows x64 中文安装、四种访问模式及 `qqon` 维护。直接开始见 [一键命令](./quickstart#next-release)；旧版见 [v0.4.0 指南](./legacy-v0-4) 与 [v0.5.0 说明](./releases#下一版本-v0-5-待发布)。
 
-本页是**当前 v0.6.0 下载**的安装说明。v0.4.0／v0.5.0／v0.6.0 均为预览定位，没有真实业务软件安装和建站能力。v0.7 的 root／LocalSystem 授权与 Linux 托管尚在开发、未发布、测试未定，另见 [托管开发指南](./hosting)；不要给当前下载附加 v0.7 专属参数。
+本页是**当前 v0.6.0 下载**的安装说明。v0.4.0／v0.5.0／v0.6.0 均为预览定位，没有真实业务软件安装和建站能力。v0.7 的 root／LocalSystem 授权与 Linux 托管尚在开发、未发布；已有有限 CI／隔离测试，不等于全平台验收，另见 [托管开发指南](./hosting)；不要给当前下载附加 v0.7 专属参数。
 
 Linux/Windows CI（含 Windows 新增 maintenance 测试）已通过，但不等于具体系统版本安装、真实 SCM、SELinux 或物理故障恢复已验收，详见 [支持矩阵](./support-matrix)。
 

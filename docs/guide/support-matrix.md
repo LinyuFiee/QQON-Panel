@@ -1,7 +1,7 @@
 # 支持矩阵与验证状态
 
 ::: warning “已发布 / CI 通过”不等于“实机验收”
-当前已发布预览版是 **[v0.6.0](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.6.0)**；v0.4／v0.5／v0.6 均不是稳定成熟承诺。[发布 CI #42349315659](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42349315659) 的 `test-build`、`windows-test`、`publish` 均为 `success`，含新增 Windows maintenance 隔离测试。发布、CI 验证和具体系统安装是不同层次；不能据此宣称所有系统或真实 SCM 安装已完成验收。**v0.7 预览尚未发布，测试尚无最终结论，不沿用这些历史结果作验收。**
+当前已发布预览版是 **[v0.6.0](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.6.0)**；v0.4／v0.5／v0.6 均不是稳定成熟承诺。[发布 CI #42349315659](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42349315659) 的 `test-build`、`windows-test`、`publish` 均为 `success`，含新增 Windows maintenance 隔离测试。发布、CI 验证和具体系统安装是不同层次；不能据此宣称所有系统或真实 SCM 安装已完成验收。**v0.7 预览尚未发布；其 Ubuntu 真实托管 CI 与 Windows 本机隔离结果在下节单列，不沿用旧发布结果作本轮验收。**
 :::
 
 ## 系统范围
@@ -50,11 +50,11 @@ Windows 指标需要特别注意：首个速率样本可以为不可用；CPU �
 
 ## 验证不能替代的内容
 
-跨编译只证明能生成目标程序；单元测试和临时目录模拟只覆盖其断言。下列事项仍未完成独立测试机验收：真实 APT/DNF 和 CA、SELinux、文件所有权/ACL、SCM 注册和服务账号、开机启动、停止等待、端口占用、健康检查、升级回退、物理断电与磁盘故障恢复。Linux/Windows CI 成功不能推导所有发行版、架构、桌面与 Server 版本通过。
+跨编译只证明能生成目标程序；单元测试和临时目录模拟只覆盖其断言。上表记录的是 v0.6 历史发行范围；下节新增的 v0.7 Ubuntu 真实托管 CI 也只覆盖列出的场景。逐发行版／架构安装、DNF、SELinux、Windows 真实 SCM/ACL、开机启动、完整旧机迁移／权限回退及物理断电／磁盘故障仍不能由单个 runner 推导通过。
 
 ## v0.7 托管预览开发范围 {#hosting-preview}
 
-**未发布，尚无最终测试结论。** 下表是本轮实现目标与明确限制，不是已发布支持矩阵或验收结果，实际操作见 [托管开发指南](./hosting)。
+**未发布；已有有限验证，不代表全平台验收。** 下表是本轮开发能力与明确限制，不是已发布支持承诺；实际操作见 [托管开发指南](./hosting)，已完成与未覆盖的测试在表后单列。
 
 | 能力 | Linux 开发范围 | Windows 开发范围 |
 | --- | --- | --- |
@@ -64,6 +64,22 @@ Windows 指标需要特别注意：首个速率样本可以为不可用；CPU �
 | 网站文件与 TLS | 单文件上传 ≤2 MiB、UTF-8 编辑 ≤256 KiB；已有 PEM 证书导入，非 ACME | 随上述网站能力一并不支持 |
 | 任务结果 | 有界共享队列、进度与日志；真实失败／中断可见 | 不把平台不支持请求伪装成成功任务 |
 
-最高权限需 `--accept-system-management`／`-AcceptSystemManagement` 或新 `qqon privilege` 的独立同意；普通 yes/update 不会授权。真实 Linux 软件安装与 HTTP/PHP 内容检查、迁移恢复、Windows LocalSystem/ACL，以及发行版／架构差异仍须用专用隔离环境记录结果。单个 Ubuntu runner 成功也不能推导 DNF、SELinux 或 Windows 全平台通过。
+最高权限需 `--accept-system-management`／`-AcceptSystemManagement` 或新 `qqon privilege` 的独立同意；普通 yes/update 不会授权。
+
+### v0.7 本轮验证结果
+
+最新全合并代码 [CI #42380757509](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42380757509) 已成功，提交 `fa1483f9ec57294d000a6f71014c4e6ee7afe87c`；Linux unit／race／真实托管及 Windows Go＋57 项 PowerShell 全部成功，但 Windows 仍非真实 SCM／LocalSystem 安装。下表的 `80fea3b…` 场景与 15.42 MiB 属于前一次独立记录。
+
+| 环境／项目 | 已确认结果 | 剩余边界 |
+| --- | --- | --- |
+| Ubuntu 真实托管 CI | [run #42379665605](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42379665605) 成功；提交 `80fea3b505bc429541ba31ed2f1ac751debaaf9e`。实际缺包安装并启动 Nginx `1.24.0-2ubuntu7.19`／PHP `8.3.6-0ubuntu0.24.04.13`，验证静态／代理／PHP HTTP、上传编辑、站点停用／启用、损坏 Nginx fixture 回退与重启、删除保留文件、认证／CSRF／同意撤销 | 不外推到其他发行版／架构、完整旧机迁移或真实 Nginx HTTPS |
+| Windows PowerShell 本机及后续 CI | 本机 **57/57**：install 23、maintenance 18、privilege 16；同组 57 项随后在最新合并 CI 成功，仍为 TEMP/mock ACL/SCM | 不是真实 LocalSystem／SCM 安装验收 |
+| MariaDB／Redis | 仅 fake 逻辑测试 | **未真实安装**，不以 Nginx/PHP 结果替代 |
+| DNF | 仅开发／模拟覆盖 | **未真实测试**；Rocky／Alma／SELinux 仍须独立验收 |
+| 网站 HTTPS 导入 | 所有站点域名校验；单元／loopback 测试 | **真实 Nginx HTTPS 未验证**，不是 ACME |
+| GUI | 仅登录截图通过 | 后续截图工具超时，完整 GUI 验收未完成 |
+| 面板 RSS | `80fea3b…` 对应 Ubuntu CI 中 5 次操作后短时采样，中位数＝最大值＝**15.42 MiB** | 不移作后续合并 CI 测量；仅面板进程，不包含业务 RAM，不是 SLA、soak 或完整负载测试 |
+
+完整验证细节见 [托管开发指南](./hosting#verification)。单个 Ubuntu runner 成功不能推导 Windows 实际服务安装、全发行版、长期负载、权限迁移／回退与物理故障恢复全部通过。
 
 v0.4.0／v0.5.0／v0.6.0 没有真实软件安装和网站部署；v0.7 开发范围也不包括 Compose、完整应用商店、终端、数据库管理或 ACME。安装遇到不在矩阵内的系统应停止并评估，不用“强制”选项掩盖不兼容。

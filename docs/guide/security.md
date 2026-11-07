@@ -46,7 +46,7 @@
 
 ### v0.7 最高系统管理权限（预览开发中） {#system-management}
 
-**尚未发布，测试尚无最终结论。** 此模式不是受限身份加一个临时助手，而是面板进程本身以 Linux root／Windows LocalSystem 常驻。面板漏洞或管理员账户失陷可能影响整台主机；面向不可信租户的隔离托管不在本轮承诺内。
+**尚未发布；有限 CI／隔离测试不是全平台安全验收。** 此模式不是受限身份加一个临时助手，而是面板进程本身以 Linux root／Windows LocalSystem 常驻。面板漏洞或管理员账户失陷可能影响整台主机；面向不可信租户的隔离托管不在本轮承诺内。
 
 - 新装专用参数：`--accept-system-management`／`-AcceptSystemManagement`；已有安装通过新 `qqon privilege`（Windows 管理器 `-Maintenance privilege`）独立确认。交互短语为 `同意最高权限`。未同意维持 restricted；普通 yes/update 或已有管理员/root 权限不算同意。
 - Linux 同意记录固定在 `/etc/server-panel/management-consent.json`；Windows 固定在系统 ProgramData 的 `QQON-Panel\management-consent.json`，均在 data 之外，由受保护安装／迁移流程维护。网页无写入／授权接口；服务还要核对真实 root／LocalSystem 身份，不能通过复制 JSON、改路径或手动切服务身份代替授权。
