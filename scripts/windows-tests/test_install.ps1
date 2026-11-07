@@ -438,7 +438,7 @@ public static class TestPanel {
             [IO.File]::WriteAllBytes($paths.Binary,(Bytes 'old'))
             if ($phase -ceq 'ready') { [IO.File]::WriteAllBytes($paths.Previous,(Bytes 'old')); [IO.File]::WriteAllBytes($paths.Binary,(Bytes 'new')) }
             else { [IO.File]::WriteAllBytes($paths.Candidate,(Bytes 'new')) }
-            [IO.File]::WriteAllBytes($paths.Journal,(ConvertTo-QPJsonBytes @{format=2;kind='update';phase=$phase;old=$old;new=$new}))
+            [IO.File]::WriteAllBytes($paths.Journal,(ConvertTo-QPJsonBytes @{format=$new['format'];kind='update';phase=$phase;old=$old;new=$new}))
             $sentinel=[IO.Path]::Combine($paths.Data,'keep'); [IO.File]::WriteAllText($sentinel,'kept')
             Resume-QPTransaction $paths
             Check (-not [IO.File]::Exists($paths.Journal) -and [IO.File]::ReadAllText($paths.Binary) -ceq 'old' -and [IO.File]::ReadAllText($sentinel) -ceq 'kept')
@@ -478,7 +478,8 @@ public static class TestPanel {
         $config = New-TestConfig
         $text = [Text.UTF8Encoding]::new($false).GetString((ConvertTo-QPJsonBytes $config))
         $keys=[regex]::Matches($text, '"((?:[^"\\]|\\.)*)"\s*:')
-        Check ($keys.Count -eq 16)
+        Check ($keys.Count -eq 18)
+        Check ((Read-QPWrapperIdentity (ConvertTo-QPJsonBytes $config)).privilegeMode -ceq 'restricted')
         foreach ($bad in @('0.5.0','v0.5.0; whoami','v0.5.0-beta','v01.5.0')) { Refuses { Invoke-QPInstalledUpdater $bad $true } 'Version' }
         $temporary = [IO.Path]::Combine($script:Root,'wrapper-owner'); [void][IO.Directory]::CreateDirectory($temporary)
         Refuses { Assert-QPWrapperPath $temporary } 'owner|protected'

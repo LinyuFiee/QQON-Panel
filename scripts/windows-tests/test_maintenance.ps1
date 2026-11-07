@@ -67,11 +67,11 @@ function Capture-Console {
     finally { [Console]::SetOut($original); $writer.Dispose() }
 }
 function Read-LegacyAsset {
-    param([string]$Name)
+    param([string]$Name, [string]$Tag = 'v0.5.0')
     # Read the local official tag as bytes; never run downloaded code or git hooks.
     $repo = [IO.Path]::GetFullPath([IO.Path]::Combine($script:Scripts, '..'))
     $git = (Get-Command git.exe -ErrorAction Stop).Source
-    return ,(Invoke-QPProcess $git @('-C', $repo, 'show', ('v0.5.0:scripts/' + $Name)) 15000 524288)
+    return ,(Invoke-QPProcess $git @('-C', $repo, 'show', ($Tag + ':scripts/' + $Name)) 15000 524288)
 }
 function New-LegacyConfig {
     $old = New-TestConfig
@@ -213,7 +213,7 @@ try {
         foreach ($running in @($true,$false)) {
             $paths = New-TestPaths; $old = New-TestConfig; Save-TestInstall $paths $old
             $new = Set-QPAccessValue $old (Get-QPAccess local 9443) $null
-            $fake = @{ State = $(if ($running) {'Running'} else {'Stopped'}); PathName = Get-QPServiceCommand $paths $old }
+            $fake = @{ State = $(if ($running) {'Running'} else {'Stopped'}); StartName = 'NT SERVICE\QQONPanel'; PathName = Get-QPServiceCommand $paths $old }
             $events = [Collections.Generic.List[string]]::new(); $fault=@{Fail=$false}
             [IO.File]::WriteAllText([IO.Path]::Combine($paths.Data,'account.json'),'ACCOUNT_SENTINEL')
             Invoke-QPConfigTransaction $paths $old $new
@@ -305,7 +305,7 @@ try {
         function Get-QPService { return $fake }; function Assert-QPService { param($Paths,$Config,$Service) Check ($Service.PathName -ceq (Get-QPServiceCommand $Paths $Config)) }
         function Stop-QPServiceAndWait { param($Paths,$Config) $fake.State='Stopped' }
         function Start-QPService { param($Paths,$Config) $fake.State='Running' }
-        function Wait-QPHealthy { param($Paths,$Config) if($fault.Fail -and $Config['format'] -eq 2){throw '模拟新管理配置健康失败'} }
+        function Wait-QPHealthy { param($Paths,$Config) if($fault.Fail -and $Config['format'] -eq 3){throw '模拟新管理配置健康失败'} }
         function Get-QPReleaseMetadata { param($Version) return $metadata }
         function Read-QPVerifiedAsset { param($Metadata,$Name) return ,$assets[$Name] }
         foreach($failure in @($false,$true)) {
@@ -314,18 +314,51 @@ try {
             [IO.File]::WriteAllBytes($paths.Binary,(Bytes 'app')); Write-QPAtomicJson $paths.Config $old
             [IO.File]::WriteAllText([IO.Path]::Combine($paths.Data,'account.json'),'KEEP_OLD_ACCOUNT')
             $assets=@{ 'install.ps1'=[IO.File]::ReadAllBytes([IO.Path]::Combine($script:Scripts,'install.ps1')); 'update.ps1'=[IO.File]::ReadAllBytes([IO.Path]::Combine($script:Scripts,'update.ps1')) }
-            $metadata=@{Manifest=@{version='0.6.0'};Sums=@{'install.ps1'=(Get-QPSha256 $assets['install.ps1']);'update.ps1'=(Get-QPSha256 $assets['update.ps1'])}}
+            $metadata=@{Manifest=@{version='0.7.0'};Sums=@{'install.ps1'=(Get-QPSha256 $assets['install.ps1']);'update.ps1'=(Get-QPSha256 $assets['update.ps1'])}}
             $fake=@{State='Running';PathName=(Get-QPServiceCommand $paths $old)}; $fault=@{Fail=$failure}
-            if($failure) { Refuses { Invoke-QPMigration $paths 'v0.6.0' ([IO.Path]::Combine($script:Scripts,'install.ps1')) } '旧配置.*已恢复' }
-            else { Invoke-QPMigration $paths 'v0.6.0' ([IO.Path]::Combine($script:Scripts,'install.ps1')) }
+            if($failure) { Refuses { Invoke-QPMigration $paths 'v0.7.0' ([IO.Path]::Combine($script:Scripts,'install.ps1')) } '旧配置.*已恢复' }
+            else { Invoke-QPMigration $paths 'v0.7.0' ([IO.Path]::Combine($script:Scripts,'install.ps1')) }
             $current=Read-QPConfig $paths -AllowLegacy
-            Check ($current['format'] -eq $(if($failure){1}else{2}) -and $current['version'] -ceq '0.5.0')
+            Check ($current['format'] -eq $(if($failure){1}else{3}) -and $current['version'] -ceq '0.5.0')
+            if (-not $failure) { Check ($current['privilegeMode'] -ceq 'restricted' -and $null -eq $current['privilegeConsent']) }
             Check ([IO.File]::ReadAllText($paths.Binary) -ceq 'app' -and [IO.File]::ReadAllText([IO.Path]::Combine($paths.Data,'account.json')) -ceq 'KEEP_OLD_ACCOUNT')
             Check (-not [IO.File]::Exists($paths.Journal) -and $fake.State -ceq 'Running')
             $backup=@([IO.Directory]::EnumerateDirectories([IO.Path]::Combine($paths.State,'backups'))); Check ($backup.Count -eq 1)
             Check ((Get-QPFileHash ([IO.Path]::Combine($backup[0],'install.ps1'))) -ceq $old['installerSHA256'])
             if($failure) { Assert-QPKnownLegacy $current; Check (-not [IO.File]::Exists([IO.Path]::Combine($paths.Code,'qqon.cmd'))) }
             else { Check ($current['accessMode'] -ceq 'local' -and $null -eq $current['tls']); Assert-QPShortcuts $paths }
+        }
+    }
+
+    Test '官方v0.6双hash管理器迁移保留TLS/快捷入口并可完整回滚' {
+        $legacyInstaller = Read-LegacyAsset 'install.ps1' 'v0.6.0'; $legacyUpdater = Read-LegacyAsset 'update.ps1' 'v0.6.0'
+        Check ((Get-QPSha256 $legacyInstaller) -ceq 'eb21039d21cd5aa29b4c75ae8eb14c1424ef76e08c89a233dd05c0c30c648168')
+        Check ((Get-QPSha256 $legacyUpdater) -ceq '84a262f5aa6305d1053ad043976fa6bc544bfec5ba3d5ca3632f33d889a7f133')
+        function Assert-QPAcl { param($Path,$Kind,[switch]$File,[switch]$Root) Assert-TestPath $Path }
+        function New-QPSecurity { param($Kind,[switch]$File) return New-TestSecurity -File:$File }
+        function Assert-QPBinary { param($Path,$Config,[switch]$ReadOnly) Check ((Get-QPFileHash $Path) -ceq $Config['binarySHA256']) }
+        function Get-QPService { return $fake }
+        function Assert-QPService { param($Paths,$Config,$Service) Check ($Service.StartName -ceq 'NT SERVICE\QQONPanel' -and $Service.PathName -ceq (Get-QPServiceCommand $Paths $Config)) }
+        function Stop-QPServiceAndWait { param($Paths,$Config) $fake.State='Stopped' }
+        function Start-QPService { param($Paths,$Config) $fake.State='Running' }
+        function Wait-QPHealthy { param($Paths,$Config) if($fault.Fail -and $Config['format'] -eq 3){throw '模拟v0.6迁移后失败'} }
+        function Get-QPReleaseMetadata { param($Version) return $metadata }
+        function Read-QPVerifiedAsset { param($Metadata,$Name) return ,$assets[$Name] }
+        $assets=@{'install.ps1'=[IO.File]::ReadAllBytes([IO.Path]::Combine($script:Scripts,'install.ps1'));'update.ps1'=[IO.File]::ReadAllBytes([IO.Path]::Combine($script:Scripts,'update.ps1'))}
+        $metadata=@{Manifest=@{version='0.7.0'};Sums=@{'install.ps1'=(Get-QPSha256 $assets['install.ps1']);'update.ps1'=(Get-QPSha256 $assets['update.ps1'])}}
+        foreach($failure in @($false,$true)) {
+            $paths=New-TestPaths; $old=Set-QPAccessValue (New-TestConfig) (Get-QPAccess public-selfsigned 8443 8.8.8.8) (New-TestTls)
+            $old['installerSHA256']=Get-QPSha256 $legacyInstaller;$old['updaterSHA256']=Get-QPSha256 $legacyUpdater
+            [IO.File]::WriteAllBytes($paths.Installer,$legacyInstaller);[IO.File]::WriteAllBytes($paths.Updater,$legacyUpdater);[IO.File]::WriteAllText($paths.Binary,'app');Write-QPAtomicJson $paths.Config $old
+            Write-QPShortcuts $paths;$oldShortcut=Get-QPFileHash ([IO.Path]::Combine($paths.Code,'qqon.ps1')) 32768
+            $tls=Get-QPTlsPaths $paths $old['tls']['generation'];[void][IO.Directory]::CreateDirectory($tls.Directory);[IO.File]::WriteAllText($tls.Certificate,'CERT');[IO.File]::WriteAllText($tls.Key,'KEEP_V06_KEY')
+            [IO.File]::WriteAllText([IO.Path]::Combine($paths.Data,'account.json'),'KEEP_V06_ACCOUNT')
+            $fake=@{State='Running';StartName='NT SERVICE\QQONPanel';PathName=(Get-QPServiceCommand $paths $old)};$fault=@{Fail=$failure}
+            if($failure){Refuses {Invoke-QPMigration $paths 'v0.7.0' ([IO.Path]::Combine($script:Scripts,'install.ps1'))} '旧配置.*已恢复'}else{Invoke-QPMigration $paths 'v0.7.0' ([IO.Path]::Combine($script:Scripts,'install.ps1'))}
+            $current=Read-QPConfig $paths;Check ($current['format'] -eq $(if($failure){2}else{3}));Check ((Get-QPPrivilegeMode $current) -ceq 'restricted');Check (Test-QPSameFields $old $current @('version','accessMode','tls','listen','origin','binarySHA256'))
+            Assert-QPShortcuts $paths;Check ([IO.File]::ReadAllText($tls.Key) -ceq 'KEEP_V06_KEY' -and [IO.File]::ReadAllText([IO.Path]::Combine($paths.Data,'account.json')) -ceq 'KEEP_V06_ACCOUNT')
+            Check (-not [IO.File]::Exists($paths.Journal) -and -not [IO.File]::Exists((Get-QPConsentPath $paths)))
+            if($failure){Check ((Get-QPFileHash $paths.Installer 524288) -ceq $old['installerSHA256']);Check ((Get-QPFileHash ([IO.Path]::Combine($paths.Code,'qqon.ps1')) 32768) -ceq $oldShortcut)}
         }
     }
 

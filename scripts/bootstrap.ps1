@@ -1,7 +1,7 @@
 ﻿# QQON-Panel Windows entry. PowerShell 5.1 / inbox .NET only.
 # The Pages copy of this file is an entry point, not a second installer.
 [CmdletBinding()]
-param()
+param([switch]$AcceptSystemManagement)
 
 function Assert-QP {
     param([bool]$Condition, [string]$Message)
@@ -429,13 +429,18 @@ function ConvertTo-QPArgument {
 }
 
 function Invoke-QPBootstrap {
+    param([bool]$AcceptSystemManagement = $false)
     Assert-QPNativeHost -Administrator
     [Console]::WriteLine('QQON-Panel：只从固定 GitHub 发行版下载，核验 manifest 和 SHA-256 后执行受保护的本地安装器。')
     [Console]::WriteLine('HTTPS 和摘要依赖此仓库发布者，并非独立代码签名；不会修改全局执行策略。')
     $metadata = Get-QPReleaseMetadata
+    if ($AcceptSystemManagement) {
+        Assert-QP ((ConvertTo-QPVersion $metadata.Manifest['version']) -ge [version]'0.7.0') '最高权限参数只传递给已校验 v0.7.0 或以上安装器；旧版拒绝而非降级同意。'
+        [Console]::WriteLine('已显式传入 -AcceptSystemManagement；安装器会展示专门中文最高权限告知。该参数仅用于新装，不自动迁移旧运行服务。')
+    }
     if ((ConvertTo-QPVersion $metadata.Manifest['version']) -lt [version]'0.6.0') {
-        [Console]::WriteLine('当前公开发行版仍为 v0.5：继续使用已校验的旧安装器，仅配置本地访问或已有 HTTPS 代理；旧安装器界面可能为英文。')
-        [Console]::WriteLine('公网 HTTPS 与中文 qqon 维护功能需待 v0.6 正式发布后使用；不会向旧程序发送新增证书参数。')
+        [Console]::WriteLine('当前选定 v0.5 预览版：继续使用已校验的旧安装器，仅配置本地访问或已有 HTTPS 代理；旧安装器界面可能为英文。')
+        [Console]::WriteLine('公网 HTTPS 与中文 qqon 维护需要 v0.6 或更新预览版；不会向旧程序发送新增证书参数。')
     }
     $bytes = Read-QPVerifiedAsset $metadata 'install.ps1'
     # Do not execute elevated code under a user-owned TEMP ancestor. The inbox
@@ -477,6 +482,7 @@ function Invoke-QPBootstrap {
         $start.WorkingDirectory = [Environment]::SystemDirectory
         $start.UseShellExecute = $false
         $start.Arguments = '-NoLogo -NoProfile -ExecutionPolicy Bypass -File ' + (ConvertTo-QPArgument $script) + ' -Version ' + (ConvertTo-QPArgument $metadata.Release.Tag)
+        if ($AcceptSystemManagement) { $start.Arguments += ' -AcceptSystemManagement' }
         $process = [Diagnostics.Process]::Start($start)
         try { $process.WaitForExit(); Assert-QP ($process.ExitCode -eq 0) 'Windows installer failed; no success is being reported.' } finally { $process.Dispose() }
     } finally {
@@ -489,5 +495,5 @@ function Invoke-QPBootstrap {
 # Dot-sourcing is a definition-only test/import entry. No production path overrides.
 if ($MyInvocation.InvocationName -ne '.') {
     $ErrorActionPreference = 'Stop'
-    try { Invoke-QPBootstrap } catch { [Console]::Error.WriteLine('QQON-Panel 引导安装未完成：' + (Get-QPFailureText $_.Exception.Message)); exit 1 }
+    try { Invoke-QPBootstrap ([bool]$AcceptSystemManagement) } catch { [Console]::Error.WriteLine('QQON-Panel 引导安装未完成：' + (Get-QPFailureText $_.Exception.Message)); exit 1 }
 }

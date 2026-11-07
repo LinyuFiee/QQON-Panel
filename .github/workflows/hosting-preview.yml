@@ -104,5 +104,6 @@ jobs:
           go test ./...
           go vet ./...
           powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/windows-tests/test_install.ps1
+          powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/windows-tests/test_privilege.ps1
           go build -trimpath -ldflags "-X main.commit=$BUILD_SHA -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o "$RUNNER_TEMP/qqon-maintenance-test.exe" .
           powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/windows-tests/test_maintenance.ps1 -PanelBinary "$RUNNER_TEMP/qqon-maintenance-test.exe"

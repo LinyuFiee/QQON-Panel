@@ -13,7 +13,11 @@ func (r *Runner) Register(mux *http.ServeMux) {
 		r.mu.Lock()
 		tasks := make([]Task, 0, len(r.tasks))
 		for i := len(r.tasks) - 1; i >= 0; i-- {
-			tasks = append(tasks, cloneTask(r.tasks[i]))
+			summary := *r.tasks[i]
+			summary.Logs = nil
+			// Visible-page polling needs descriptors only. Retrieve the bounded
+			// log tail from /api/jobs/{id}, not all 32 tails on every refresh.
+			tasks = append(tasks, cloneTask(&summary))
 		}
 		r.mu.Unlock()
 		respond(w, http.StatusOK, map[string]any{"jobs": tasks})

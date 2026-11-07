@@ -200,6 +200,7 @@ jobs:
           go test ./...
           go vet ./...
           powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/windows-tests/test_install.ps1
+          powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/windows-tests/test_privilege.ps1
           go build -trimpath -ldflags "-X main.commit=$RELEASE_COMMIT -X main.buildTime=$RELEASE_BUILD_TIME" -o "$RUNNER_TEMP/qqon-maintenance-test.exe" .
           powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/windows-tests/test_maintenance.ps1 -PanelBinary "$RUNNER_TEMP/qqon-maintenance-test.exe"
           # No Windows race run without a configured CGO compiler. Linux runs it.

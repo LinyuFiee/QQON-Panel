@@ -64,15 +64,16 @@ function Read-QPWrapperCommand {
     if ($Commands.Count -gt 5) { throw '维护命令参数过多。输入 qqon help 查看帮助。' }
     foreach ($word in $Commands) { if ($word -cnotmatch '\A[a-zA-Z0-9.-]{1,64}\z') { throw '维护参数仅允许 ASCII 白名单，不能包含空格、路径或命令片段。' } }
     $action = $Commands[0]
-    if ($action -cnotin @('menu', 'help', '--help', 'status', 'url', 'start', 'stop', 'restart', 'logs', 'update', 'backup', 'config', 'tls')) { throw '未知维护命令；请输入 qqon help。' }
-    $yes = $false; $version = ''; $lines = 50; $index = 1
+    if ($action -cnotin @('menu', 'help', '--help', 'status', 'url', 'start', 'stop', 'restart', 'logs', 'update', 'backup', 'config', 'tls', 'privilege')) { throw '未知维护命令；请输入 qqon help。' }
+    $yes = $false; $version = ''; $lines = 50; $index = 1; $accept = $false
     if ($action -ceq 'tls') {
         if ($Commands.Count -lt 2 -or $Commands[1] -cne 'renew') { throw '证书续期命令为 qqon tls renew。' }
         $index = 2
     }
     while ($index -lt $Commands.Count) {
         $arg = $Commands[$index]; $index++
-        if ($arg -ceq '--yes' -and $action -cin @('start', 'stop', 'restart', 'update', 'backup', 'config', 'tls') -and -not $yes) { $yes = $true; continue }
+        if ($arg -ceq '--yes' -and $action -cin @('start', 'stop', 'restart', 'update', 'backup', 'config', 'tls', 'privilege') -and -not $yes) { $yes = $true; continue }
+        if ($arg -ceq '--accept-system-management' -and $action -ceq 'privilege' -and -not $accept) { $accept = $true; continue }
         if ($arg -ceq '--version' -and $action -ceq 'update' -and -not $version -and $index -lt $Commands.Count) {
             $version = $Commands[$index]; $index++
             if ($version -cnotmatch '\Av(0|[1-9][0-9]{0,9})\.(0|[1-9][0-9]{0,9})\.(0|[1-9][0-9]{0,9})\z') { throw '版本必须为稳定版 v主版本.次版本.修订号。' }
@@ -86,7 +87,31 @@ function Read-QPWrapperCommand {
         throw '维护命令参数不匹配或重复；请输入 qqon help。'
     }
     if ($action -ceq '--help') { $action = 'help' }
-    return @{ Action = $action; Yes = $yes; Version = $version; Lines = $lines; Text = ($Commands -join ' ') }
+    return @{ Action = $action; Yes = $yes; Version = $version; Lines = $lines; AcceptSystemManagement = $accept; Text = ($Commands -join ' ') }
+}
+
+function Test-QPWrapperJsonValue {
+    param([hashtable]$State, [int]$Depth = 0)
+    if ($Depth -gt 3) { throw '安装配置 JSON 嵌套过深。' }
+    while ($State.Pos -lt $State.Text.Length -and $State.Text[$State.Pos] -cin @([char]' ', [char]9, [char]10, [char]13)) { $State.Pos++ }
+    if ($State.Pos -ge $State.Text.Length) { throw '安装配置 JSON 不完整。' }
+    if ($State.Text[$State.Pos] -ceq '{') {
+        $State.Pos++; $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        while ($true) {
+            while ($State.Pos -lt $State.Text.Length -and [char]::IsWhiteSpace($State.Text[$State.Pos])) { $State.Pos++ }
+            $key = [regex]::Match($State.Text.Substring($State.Pos), '\A"([A-Za-z][A-Za-z0-9]*)"\s*:')
+            if (-not $key.Success -or -not $seen.Add($key.Groups[1].Value)) { throw '安装配置含转义、重复或无效字段。' }
+            $State.Pos += $key.Length; Test-QPWrapperJsonValue $State ($Depth + 1)
+            while ($State.Pos -lt $State.Text.Length -and [char]::IsWhiteSpace($State.Text[$State.Pos])) { $State.Pos++ }
+            if ($State.Pos -ge $State.Text.Length) { throw '安装配置 JSON 不完整。' }
+            $next = $State.Text[$State.Pos]; $State.Pos++
+            if ($next -ceq '}') { return }
+            if ($next -cne ',') { throw '安装配置 JSON 分隔符无效。' }
+        }
+    }
+    $token = [regex]::Match($State.Text.Substring($State.Pos), '\A(?:"(?:[^"\\\x00-\x1f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))*"|null|true|false|-?(?:0|[1-9][0-9]*))')
+    if (-not $token.Success) { throw '安装配置 JSON 值无效。' }
+    $State.Pos += $token.Length
 }
 
 function Read-QPWrapperIdentity {
@@ -94,22 +119,30 @@ function Read-QPWrapperIdentity {
     if ($null -eq $Bytes -or $Bytes.Length -lt 1 -or $Bytes.Length -gt 32768) { throw '已安装配置大小无效。' }
     $text = [Text.UTF8Encoding]::new($false, $true).GetString($Bytes)
     if ($text.Length -eq 0 -or $text[0] -ceq [char]0xfeff) { throw '安装配置必须是无 BOM 的 UTF-8 JSON。' }
-    $fields = @('format', 'repository', 'service', 'listen', 'origin', 'healthHost', 'version', 'dataSchema', 'commit', 'buildTime', 'binarySize', 'binarySHA256', 'installerSHA256', 'updaterSHA256', 'accessMode', 'tls')
-    $tlsFields = @('generation', 'host', 'fingerprint', 'notAfter')
-    $keys = [regex]::Matches($text, '"((?:[^"\\]|\\.)*)"\s*:')
-    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-    foreach ($key in $keys) {
-        $name = $key.Groups[1].Value
-        if ($name -cnotin ($fields + $tlsFields) -or -not $seen.Add($name)) { throw '安装配置含未知、转义或重复字段。' }
-    }
+    $state = @{ Text = $text; Pos = 0 }; Test-QPWrapperJsonValue $state
+    if ($text.Substring($state.Pos) -cnotmatch '\A[ \t\r\n]*\z') { throw '安装配置含额外 JSON 或尾随内容。' }
     $value = ConvertFrom-Json -InputObject $text -ErrorAction Stop
-    if (@($value.PSObject.Properties).Count -ne 16) { throw '安装配置顶层字段不匹配。' }
+    $fields = @('format', 'repository', 'service', 'listen', 'origin', 'healthHost', 'version', 'dataSchema', 'commit', 'buildTime', 'binarySize', 'binarySHA256', 'installerSHA256', 'updaterSHA256', 'accessMode', 'tls')
+    if ($value.format -eq 3) { $fields += @('privilegeMode', 'privilegeConsent') }
+    if (@($value.PSObject.Properties).Count -ne $fields.Count) { throw '安装配置顶层字段不匹配。' }
     foreach ($field in $fields) { if ($field -cnotin @($value.PSObject.Properties.Name)) { throw '安装配置字段名称不正确。' } }
-    if ($value.format -isnot [int] -or $value.format -ne 2 -or $value.repository -cne 'LinyuFiee/QQON-Panel' -or $value.service -cne 'QQONPanel' -or $value.dataSchema -ne 1 -or $value.installerSHA256 -isnot [string] -or $value.updaterSHA256 -isnot [string] -or $value.installerSHA256 -cnotmatch '\A[0-9a-f]{64}\z' -or $value.updaterSHA256 -cnotmatch '\A[0-9a-f]{64}\z') { throw '已安装管理器身份无效；旧版只能通过已校验安装器单独迁移。' }
-    if ($null -eq $value.tls) { if ($keys.Count -ne 16) { throw '非 TLS 配置含额外字段。' } }
-    else {
-        if ($keys.Count -ne 20 -or @($value.tls.PSObject.Properties).Count -ne 4) { throw 'TLS 配置字段不匹配。' }
+    if ($value.format -isnot [int] -or $value.format -notin @(2,3) -or $value.repository -cne 'LinyuFiee/QQON-Panel' -or $value.service -cne 'QQONPanel' -or $value.dataSchema -ne 1 -or $value.installerSHA256 -isnot [string] -or $value.updaterSHA256 -isnot [string] -or $value.installerSHA256 -cnotmatch '\A[0-9a-f]{64}\z' -or $value.updaterSHA256 -cnotmatch '\A[0-9a-f]{64}\z') { throw '已安装管理器身份无效；旧版只能通过已校验安装器单独迁移。' }
+    if ($null -ne $value.tls) {
+        $tlsFields = @('generation', 'host', 'fingerprint', 'notAfter')
+        if (@($value.tls.PSObject.Properties).Count -ne 4) { throw 'TLS 配置字段不匹配。' }
         foreach ($field in $tlsFields) { if ($field -cnotin @($value.tls.PSObject.Properties.Name)) { throw 'TLS 配置字段名不正确。' } }
+    }
+    if ($value.format -eq 3) {
+        if ($value.privilegeMode -cnotin @('restricted', 'system')) { throw '安装配置权限模式无效。' }
+        if ($value.privilegeMode -ceq 'restricted') { if ($null -ne $value.privilegeConsent) { throw '受限模式不得声明最高权限同意。' } }
+        else {
+            $consent = $value.privilegeConsent; $consentFields = @('format','mode','identity','noticeVersion','acceptedAt','acceptedBy','notice')
+            if ($null -eq $consent -or @($consent.PSObject.Properties).Count -ne 7) { throw '最高权限同意字段缺失。' }
+            foreach ($field in $consentFields) { if ($field -cnotin @($consent.PSObject.Properties.Name)) { throw '最高权限同意字段无效。' } }
+            if ($consent.format -isnot [int] -or $consent.format -ne 1 -or $consent.mode -cne 'system' -or $consent.identity -cne 'LocalSystem' -or $consent.noticeVersion -isnot [int] -or $consent.noticeVersion -ne 1 -or $consent.acceptedBy -cne 'Administrator' -or $consent.notice -cne 'full-system-management' -or $consent.acceptedAt -isnot [string] -or $consent.acceptedAt -cnotmatch '\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\z') { throw '最高权限同意内容无效。' }
+            $time = [datetimeoffset]::MinValue
+            if (-not [datetimeoffset]::TryParse($consent.acceptedAt, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal, [ref]$time) -or $time -gt [datetimeoffset]::UtcNow.AddMinutes(5)) { throw '最高权限同意时间无效。' }
+        }
     }
     return $value
 }

@@ -4,7 +4,8 @@ QQON-Panel Windows 安装与维护（原生 64 位 PowerShell 5.1）。
 .DESCRIPTION
 默认引导公网 IPv4、自签 HTTPS、端口 8443；不修改防火墙或系统证书信任。
 维护入口：qqon；qqon status/url/start/stop/restart/logs/update/backup/config；qqon tls renew。
--Yes 仅用于明确的自动操作。PATH 追加另需 -AddToPath；旧版迁移另需 -MigrateLegacy。
+-Yes 不授予系统管理权限；最高权限另需 -AcceptSystemManagement 或专门中文确认。
+PATH 追加另需 -AddToPath；旧版管理器迁移另需 -MigrateLegacy。
 #>
 [CmdletBinding()]
 param(
@@ -13,6 +14,7 @@ param(
     [string]$Origin = '',
     [string]$Version = '',
     [switch]$Yes,
+    [switch]$AcceptSystemManagement,
     [string]$AccessMode = 'public-selfsigned',
     [string]$PublicHost = '',
     [string]$Certificate = '',
@@ -525,6 +527,9 @@ function Assert-QPAcl {
         }
     }
     foreach ($sid in $allowed.Keys) {
+        # A stricter Admin/SYSTEM-only ACL is also safe. System layout validation
+        # separately uses Kind Admin to forbid every legacy service ACE.
+        if ($sid -ceq (Get-QPServiceSid).Value -and -not $effective.ContainsKey($sid)) { continue }
         Assert-QP ($effective.ContainsKey($sid) -and ($effective[$sid] -band [long]$allowed[$sid]) -eq [long]$allowed[$sid]) ('Missing required private ACL entry on ' + $Path)
     }
 }
@@ -856,14 +861,92 @@ function Get-QPAccess {
     return @{ accessMode = $Mode; listen = '0.0.0.0:' + $Port; origin = 'https://' + $authority; healthHost = $authority; host = $canonical }
 }
 
+function Get-QPPrivilegeMode {
+    param([hashtable]$Config)
+    if ($Config['format'] -ne 3) { return 'restricted' }
+    Assert-QP ($Config['privilegeMode'] -is [string] -and $Config['privilegeMode'] -cin @('restricted', 'system')) '权限模式无效。[QP_PRIVILEGE]'
+    return $Config['privilegeMode']
+}
+
+function Get-QPStorageKind {
+    param([hashtable]$Config, [string]$Kind)
+    if ((Get-QPPrivilegeMode $Config) -ceq 'system') { return 'Admin' }
+    return $Kind
+}
+
+function Read-QPPrivilegeConsent {
+    param($Value)
+    Assert-QPFields $Value @('format', 'mode', 'identity', 'noticeVersion', 'acceptedAt', 'acceptedBy', 'notice')
+    Assert-QP ((Test-QPInteger $Value['format'] 1 1) -and (Test-QPInteger $Value['noticeVersion'] 1 1)) '授权记录格式或告知版本无效。[QP_PRIVILEGE]'
+    foreach ($pair in @(@('mode', 'system'), @('identity', 'LocalSystem'), @('acceptedBy', 'Administrator'), @('notice', 'full-system-management'))) {
+        Assert-QP ($Value[$pair[0]] -is [string] -and $Value[$pair[0]] -ceq $pair[1]) '授权记录固定字段不正确。[QP_PRIVILEGE]'
+    }
+    Assert-QP ($Value['acceptedAt'] -is [string] -and $Value['acceptedAt'] -cmatch '\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\z') '授权时间必须是 UTC 秒格式，不接受偏移或小数秒。[QP_PRIVILEGE]'
+    $time = Read-QPUtcTime $Value['acceptedAt']
+    Assert-QP ($time -le [datetimeoffset]::UtcNow.AddMinutes(5)) '授权记录时间在未来。[QP_PRIVILEGE]'
+    return ,$Value
+}
+
+function Test-QPInteractiveInput { return (-not [Console]::IsInputRedirected) }
+
+function Confirm-QPSystemManagement {
+    param([bool]$AcceptSystemManagement, [bool]$Yes)
+    [Console]::WriteLine('最高权限告知：QQON-Panel 本体将以 LocalSystem（Windows 系统最高权限）运行，可管理整台服务器、安装软件、修改文件和服务。账户或面板漏洞可能导致整机被控制。此授权不同于安装确认、PATH 同意和普通 -Yes；Windows 暂不支持的软件功能仍会明确报告不支持。')
+    if (-not $AcceptSystemManagement) {
+        if ($Yes -or -not (Test-QPInteractiveInput)) { [Console]::WriteLine('未单独授权最高权限，保持 restricted 受限模式。'); return $null }
+        if ((Read-QPConsole '只有输入完整“同意最高权限”才授权；其它输入保持受限模式：') -cne '同意最高权限') { return $null }
+    }
+    return Read-QPPrivilegeConsent @{ format = 1; mode = 'system'; identity = 'LocalSystem'; noticeVersion = 1; acceptedAt = [datetime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", [Globalization.CultureInfo]::InvariantCulture); acceptedBy = 'Administrator'; notice = 'full-system-management' }
+}
+
+function Get-QPConsentPath {
+    param([hashtable]$Paths)
+    # Paths comes only from Get-QPPaths in production, never a CLI/dataDir/env override.
+    return [IO.Path]::Combine($Paths.State, 'management-consent.json')
+}
+
+function Read-QPManagementConsent {
+    param([hashtable]$Paths, [switch]$AllowMissing, [switch]$Snapshot)
+    $path = Get-QPConsentPath $Paths
+    Assert-QPPlainPath $path -AllowMissing
+    Assert-QP (-not [IO.Directory]::Exists($path)) '授权记录必须是固定普通文件。[QP_PRIVILEGE]'
+    if (-not [IO.File]::Exists($path)) { Assert-QP ([bool]$AllowMissing) '缺少固定最高权限授权记录。[QP_PRIVILEGE]'; return $null }
+    if (-not $Snapshot) { Assert-QPAcl $Paths.State 'Admin' -Root }
+    Assert-QPAcl $path 'Admin' -File
+    Assert-QP ([IO.File]::GetAccessControl($path).AreAccessRulesProtected) '授权记录必须使用 protected ACL。[QP_PRIVILEGE]'
+    return Read-QPPrivilegeConsent (ConvertFrom-QPJson (Read-QPFile $path 4096 -Regular) 4096)
+}
+
+function Assert-QPSystemConsent {
+    param([hashtable]$Paths, [hashtable]$Config)
+    if ((Get-QPPrivilegeMode $Config) -cne 'system') { return }
+    $record = Read-QPManagementConsent $Paths
+    Assert-QP (Test-QPSameFields $Config['privilegeConsent'] $record @('format', 'mode', 'identity', 'noticeVersion', 'acceptedAt', 'acceptedBy', 'notice')) '安装配置与固定授权记录不一致。[QP_PRIVILEGE]'
+}
+
+function Write-QPManagementConsent {
+    param([hashtable]$Paths, [hashtable]$Consent)
+    [void](Read-QPPrivilegeConsent $Consent)
+    Assert-QPAcl $Paths.State 'Admin' -Root
+    $path = Get-QPConsentPath $Paths
+    Write-QPAtomicJson $path $Consent
+    [void](Read-QPManagementConsent $Paths)
+}
+
 function Read-QPConfigValue {
     param([hashtable]$Value, [switch]$AllowLegacy)
     $fields = @('format', 'repository', 'service', 'listen', 'origin', 'healthHost', 'version', 'dataSchema', 'commit', 'buildTime', 'binarySize', 'binarySHA256', 'installerSHA256', 'updaterSHA256')
     $legacy = (Test-QPInteger $Value['format'] 1 1)
-    Assert-QP ((Test-QPInteger $Value['format'] 2 2) -or ($AllowLegacy -and $legacy)) '安装配置必须为 format2；旧版需独立确认迁移，不能自动接管。'
+    Assert-QP ((Test-QPInteger $Value['format'] 2 3) -or ($AllowLegacy -and $legacy)) '安装配置必须为 format2/format3；旧版需独立确认迁移，不能自动接管。'
     if (-not $legacy) { $fields += @('accessMode', 'tls') }
+    if ($Value['format'] -eq 3) { $fields += @('privilegeMode', 'privilegeConsent') }
     Assert-QPFields $Value $fields
+    if ($Value['format'] -eq 3) {
+        if ((Get-QPPrivilegeMode $Value) -ceq 'system') { [void](Read-QPPrivilegeConsent $Value['privilegeConsent']) }
+        else { Assert-QP ($null -eq $Value['privilegeConsent']) '受限模式不得声明最高权限同意。[QP_PRIVILEGE]' }
+    }
     Assert-QPIdentity $Value
+    if ((Get-QPPrivilegeMode $Value) -ceq 'system') { Assert-QP ((ConvertTo-QPVersion $Value['version']) -ge [version]'0.7.0') '最高权限模式要求 v0.7.0 或更新程序。[QP_PRIVILEGE]' }
     Assert-QP ($Value['service'] -is [string] -and $Value['service'] -ceq 'QQONPanel') 'Windows 服务身份不正确。'
     Assert-QP ($Value['listen'] -is [string] -and $Value['listen'] -cmatch '\A(127\.0\.0\.1|0\.0\.0\.0):([1-9][0-9]{3,4})\z') '监听地址只能是固定 IPv4 回环或所有 IPv4 接口及规范端口。'
     $port = [int]($Value['listen'].Split([char]':')[1])
@@ -898,15 +981,19 @@ function Read-QPConfig {
 function Assert-QPKnownLegacy {
     param([hashtable]$Config)
     [void](Read-QPConfigValue $Config -AllowLegacy)
-    Assert-QP ($Config['format'] -eq 1 -and $Config['installerSHA256'] -ceq 'db0bf026d4debb409fd14b30f0837cc7ba4d5a3f48cfec121545feff8c3931c8' -and $Config['updaterSHA256'] -ceq '383e0eec3c969ed9dd93ee8e05c1ebc4fd2d12bb4162dda6300025cfe951278d') '仅支持已知官方 v0.5 管理器迁移；配置内任意 hash 不能作为迁移信任锚点。'
+    $v05 = $Config['format'] -eq 1 -and $Config['installerSHA256'] -ceq 'db0bf026d4debb409fd14b30f0837cc7ba4d5a3f48cfec121545feff8c3931c8' -and $Config['updaterSHA256'] -ceq '383e0eec3c969ed9dd93ee8e05c1ebc4fd2d12bb4162dda6300025cfe951278d'
+    $v06 = $Config['format'] -eq 2 -and $Config['installerSHA256'] -ceq 'eb21039d21cd5aa29b4c75ae8eb14c1424ef76e08c89a233dd05c0c30c648168' -and $Config['updaterSHA256'] -ceq '84a262f5aa6305d1053ad043976fa6bc544bfec5ba3d5ca3632f33d889a7f133'
+    Assert-QP ($v05 -or $v06) '仅支持已知官方 v0.5/v0.6 管理器迁移；配置内任意 hash 不能作为迁移信任锚点。'
 }
 
 function Test-QPSameFields {
     param([hashtable]$Left, [hashtable]$Right, [string[]]$Fields)
     foreach ($key in $Fields) {
-        if ($key -ceq 'tls') {
+        if ($key -cin @('tls', 'privilegeConsent')) {
             if (($null -eq $Left[$key]) -ne ($null -eq $Right[$key])) { return $false }
-            if ($null -ne $Left[$key] -and -not (Test-QPSameFields $Left[$key] $Right[$key] @('generation', 'host', 'fingerprint', 'notAfter'))) { return $false }
+            $nested = @('generation', 'host', 'fingerprint', 'notAfter')
+            if ($key -ceq 'privilegeConsent') { $nested = @('format', 'mode', 'identity', 'noticeVersion', 'acceptedAt', 'acceptedBy', 'notice') }
+            if ($null -ne $Left[$key] -and -not (Test-QPSameFields $Left[$key] $Right[$key] $nested)) { return $false }
         } elseif ($Left[$key] -cne $Right[$key]) { return $false }
     }
     return $true
@@ -917,7 +1004,7 @@ function Read-QPTransaction {
     Assert-QPAcl $Paths.Journal 'Admin' -File
     $value = ConvertFrom-QPJson (Read-QPFile $Paths.Journal 32768)
     $legacy = (Test-QPInteger $value['format'] 1 1)
-    Assert-QP ($legacy -or (Test-QPInteger $value['format'] 2 2)) '事务日志格式不受支持。'
+    Assert-QP ($legacy -or (Test-QPInteger $value['format'] 2 3)) '事务日志格式不受支持。'
     Assert-QP ($value['kind'] -is [string] -and $value['kind'] -cin @('install', 'update', 'config', 'renew', 'backup', 'migrate') -and $value['phase'] -is [string] -and $value['phase'] -cin @('prepared', 'ready')) '事务类型或阶段不受支持。'
     $kind = $value['kind']
     $fields = @('format', 'kind', 'phase', 'old', 'new')
@@ -937,14 +1024,16 @@ function Read-QPTransaction {
         if ($kind -ceq 'migrate') {
             Assert-QPKnownLegacy $old
             Assert-QP (Test-QPSameFields $old $new @('repository', 'service', 'listen', 'origin', 'healthHost', 'version', 'commit', 'buildTime', 'dataSchema', 'binarySize', 'binarySHA256')) '管理器迁移不得修改应用、账户或原有访问方式。'
-            Assert-QP ($null -eq $new['tls'] -and $new['accessMode'] -cin @('local', 'proxy')) '旧版迁移不能直接启用公网 TLS。'
+            if ($old['format'] -eq 1) { Assert-QP ($null -eq $new['tls'] -and $new['accessMode'] -cin @('local', 'proxy')) '旧版迁移不能直接启用公网 TLS。' }
+            else { Assert-QP (Test-QPSameFields $old $new @('accessMode', 'tls')) '管理器迁移不得改变原证书或访问方式。' }
+            Assert-QP ((Get-QPPrivilegeMode $new) -ceq 'restricted' -and $null -eq $new['privilegeConsent']) '管理器迁移不是最高权限授权。[QP_PRIVILEGE]'
         } elseif ($kind -ceq 'update') {
             $fixed = @('format', 'repository', 'service', 'listen', 'origin', 'healthHost', 'dataSchema', 'installerSHA256', 'updaterSHA256')
-            if (-not $legacy) { $fixed += @('accessMode', 'tls') }
+            if (-not $legacy) { $fixed += @('accessMode', 'tls', 'privilegeMode', 'privilegeConsent') }
             Assert-QP (Test-QPSameFields $old $new $fixed) '升级事务修改了固定访问设置或管理器。'
             Assert-QP ((ConvertTo-QPVersion $new['version']) -gt (ConvertTo-QPVersion $old['version']) -and $old['binarySHA256'] -cne $new['binarySHA256']) '事务不是严格的版本及程序摘要升级。'
         } else {
-            Assert-QP (Test-QPSameFields $old $new @('format', 'repository', 'service', 'version', 'commit', 'buildTime', 'dataSchema', 'binarySize', 'binarySHA256', 'installerSHA256', 'updaterSHA256')) '访问配置事务不能修改应用、管理器或数据格式。'
+            Assert-QP (Test-QPSameFields $old $new @('format', 'repository', 'service', 'version', 'commit', 'buildTime', 'dataSchema', 'binarySize', 'binarySHA256', 'installerSHA256', 'updaterSHA256', 'privilegeMode', 'privilegeConsent')) '访问配置事务不能修改应用、管理器、权限或数据格式。'
             if ($kind -ceq 'renew') { Assert-QP ($old['accessMode'] -ceq 'public-selfsigned' -and $new['accessMode'] -ceq 'public-selfsigned' -and (Test-QPSameFields $old $new @('listen', 'origin', 'healthHost'))) '续期仅允许原自签访问地址的新证书代次。' }
             if ($null -ne $new['tls'] -and $null -ne $old['tls']) { Assert-QP ($new['tls']['generation'] -cne $old['tls']['generation']) '证书变更必须使用全新代次，禁止覆盖旧证书。' }
         }
@@ -1022,8 +1111,9 @@ function New-QPTlsGeneration {
     Assert-QP ((ConvertTo-QPVersion $Config['version']) -ge [version]'0.6.0') '公网 TLS 需要应用 v0.6.0 或以上；请先 qqon update，旧程序不能执行证书 CLI。'
     Assert-QPBinary $Binary $Config
     $generation = [guid]::NewGuid().ToString('N'); $files = Get-QPTlsPaths $Paths $generation
-    if (-not [IO.Directory]::Exists($files.Root)) { New-QPPrivateDirectory $files.Root 'Tls' }
-    Assert-QPAcl $files.Root 'Tls' -Root
+    $kind = Get-QPStorageKind $Config 'Tls'
+    if (-not [IO.Directory]::Exists($files.Root)) { New-QPPrivateDirectory $files.Root $kind }
+    Assert-QPAcl $files.Root $kind -Root
     Assert-QPPlainPath $files.Directory -AllowMissing
     Assert-QP (-not [IO.Directory]::Exists($files.Directory) -and -not [IO.File]::Exists($files.Directory)) '证书代次必须全新；禁止覆盖旧目录。'
     if ($Access.accessMode -ceq 'public-selfsigned') {
@@ -1044,18 +1134,18 @@ function New-QPTlsGeneration {
     foreach ($path in @($files.Certificate, $files.Key)) { Assert-QPPlainPath $path; Assert-QP ([IO.File]::Exists($path)) '证书和密钥必须是普通文件。' }
     # Main creates a current-administrator-private directory; inspect before granting the service read access.
     $info = Assert-QPTlsInfo (Invoke-QPProcess $Binary @('-tls-inspect', '-tls-host', $Access.host, '-tls-cert', $files.Certificate, '-tls-key', $files.Key) 15000) $Access.host $files
-    [IO.Directory]::SetAccessControl($files.Directory, (New-QPSecurity 'Tls'))
-    foreach ($path in @($files.Certificate, $files.Key)) { [IO.File]::SetAccessControl($path, (New-QPSecurity 'Tls' -File)); Assert-QPAcl $path 'Tls' -File }
-    Assert-QPAcl $files.Directory 'Tls' -Root
+    [IO.Directory]::SetAccessControl($files.Directory, (New-QPSecurity $kind))
+    foreach ($path in @($files.Certificate, $files.Key)) { [IO.File]::SetAccessControl($path, (New-QPSecurity $kind -File)); Assert-QPAcl $path $kind -File }
+    Assert-QPAcl $files.Directory $kind -Root
     return @{ generation = $generation; host = $info['host']; fingerprint = $info['fingerprint']; notAfter = $info['notAfter'] }
 }
 
 function Assert-QPActiveTls {
     param([hashtable]$Paths, [hashtable]$Config, [switch]$Inspect)
     if ($null -eq $Config['tls']) { return }
-    $files = Get-QPTlsPaths $Paths $Config['tls']['generation']
-    Assert-QPAcl $files.Root 'Tls' -Root; Assert-QPAcl $files.Directory 'Tls' -Root
-    Assert-QPAcl $files.Certificate 'Tls' -File; Assert-QPAcl $files.Key 'Tls' -File
+    $files = Get-QPTlsPaths $Paths $Config['tls']['generation']; $kind = Get-QPStorageKind $Config 'Tls'
+    Assert-QPAcl $files.Root $kind -Root; Assert-QPAcl $files.Directory $kind -Root
+    Assert-QPAcl $files.Certificate $kind -File; Assert-QPAcl $files.Key $kind -File
     if ($Inspect) {
         $info = Assert-QPTlsInfo (Invoke-QPProcess $Paths.Binary @('-tls-inspect', '-tls-host', $Config['tls']['host'], '-tls-cert', $files.Certificate, '-tls-key', $files.Key) 15000) $Config['tls']['host'] $files
         Assert-QP ($info['fingerprint'] -ceq $Config['tls']['fingerprint'] -and $info['notAfter'] -ceq $Config['tls']['notAfter']) '活动证书与安装记录的固定指纹或有效期不一致。'
@@ -1177,10 +1267,21 @@ function Get-QPServiceCommand {
     return $command + ' -github-repo LinyuFiee/QQON-Panel'
 }
 
-function Assert-QPService {
+function Get-QPServiceIdentity {
+    param([hashtable]$Config)
+    if ((Get-QPPrivilegeMode $Config) -ceq 'system') { return 'LocalSystem' }
+    return 'NT SERVICE\QQONPanel'
+}
+
+function Assert-QPServiceDefinition {
     param([hashtable]$Paths, [hashtable]$Config, $Service)
     Assert-QP ($null -ne $Service) 'Managed QQONPanel service is missing; manual installations are not adopted.'
-    Assert-QP ($Service.Name -ceq 'QQONPanel' -and $Service.DisplayName -ceq 'QQON-Panel' -and $Service.StartName -ieq 'NT SERVICE\QQONPanel' -and $Service.ServiceType -eq 'Own Process' -and $Service.StartMode -eq 'Auto' -and $Service.PathName -ceq (Get-QPServiceCommand $Paths $Config)) 'Service account, startup type, SCM executable or arguments do not match managed metadata.'
+    Assert-QP ($Service.Name -ceq 'QQONPanel' -and $Service.DisplayName -ceq 'QQON-Panel' -and $Service.StartName -ieq (Get-QPServiceIdentity $Config) -and $Service.ServiceType -eq 'Own Process' -and $Service.StartMode -eq 'Auto' -and $Service.PathName -ceq (Get-QPServiceCommand $Paths $Config)) 'Service account, startup type, SCM executable or arguments do not match managed metadata.'
+}
+
+function Assert-QPService {
+    param([hashtable]$Paths, [hashtable]$Config, $Service)
+    Assert-QPServiceDefinition $Paths $Config $Service
     $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Services\QQONPanel', $false)
     try {
         Assert-QP ($null -ne $key -and $key.GetValue('ServiceSidType', 0) -eq 1 -and $key.GetValue('Type', 0) -eq 16 -and $key.GetValue('Start', -1) -eq 2) 'Service must be own-process SCM, automatic, with unrestricted service SID.'
@@ -1192,10 +1293,13 @@ function Register-QPService {
     param([hashtable]$Paths, [hashtable]$Config)
     Assert-QP ($null -eq (Get-QPService)) 'QQONPanel service already exists; refusing to overwrite it.'
     $sc = [IO.Path]::Combine([Environment]::SystemDirectory, 'sc.exe')
-    [void](Invoke-QPProcess $sc @('create', 'QQONPanel', 'binPath=', (Get-QPServiceCommand $Paths $Config), 'type=', 'own', 'start=', 'auto', 'error=', 'normal', 'obj=', 'NT SERVICE\QQONPanel', 'DisplayName=', 'QQON-Panel'))
+    Assert-QPSystemConsent $Paths $Config
+    [void](Invoke-QPProcess $sc @('create', 'QQONPanel', 'binPath=', (Get-QPServiceCommand $Paths $Config), 'type=', 'own', 'start=', 'auto', 'error=', 'normal', 'obj=', (Get-QPServiceIdentity $Config), 'DisplayName=', 'QQON-Panel'))
     [void](Invoke-QPProcess $sc @('sidtype', 'QQONPanel', 'unrestricted'))
-    $translated = [Security.Principal.NTAccount]::new('NT SERVICE\QQONPanel').Translate([Security.Principal.SecurityIdentifier])
-    Assert-QP ($translated.Value -ceq (Get-QPServiceSid).Value) 'Windows virtual-service SID does not match the expected identity.'
+    if ((Get-QPPrivilegeMode $Config) -ceq 'restricted') {
+        $translated = [Security.Principal.NTAccount]::new('NT SERVICE\QQONPanel').Translate([Security.Principal.SecurityIdentifier])
+        Assert-QP ($translated.Value -ceq (Get-QPServiceSid).Value) 'Windows virtual-service SID does not match the expected identity.'
+    }
     Assert-QPService $Paths $Config (Get-QPService)
 }
 
@@ -1238,7 +1342,7 @@ function Stop-QPServiceAndWait {
         if ($controller.Status -ne [ServiceProcess.ServiceControllerStatus]::Stopped -and $controller.Status -ne [ServiceProcess.ServiceControllerStatus]::StopPending) { $controller.Stop() }
         $originalPidGone = $originalPid -le 0
         $clock = [Diagnostics.Stopwatch]::StartNew()
-        while ($clock.Elapsed.TotalSeconds -lt 45) {
+        while ($clock.Elapsed.TotalSeconds -lt 60) {
             $controller.Refresh()
             if (-not $originalPidGone) {
                 try {
@@ -1249,12 +1353,13 @@ function Stop-QPServiceAndWait {
             if ($controller.Status -eq [ServiceProcess.ServiceControllerStatus]::Stopped -and $originalPidGone -and @(Get-QPBinaryProcesses $Paths.Binary).Count -eq 0 -and (Test-QPFileUnlocked $Paths.Binary)) { return }
             Start-Sleep -Milliseconds 200
         }
-        throw '服务、进程或文件锁未在 45 秒内停止或释放；禁止强制结束进程或删除锁文件绕过。'
+        throw '服务、进程或文件锁未在 60 秒内停止或释放；禁止强制结束进程或删除锁文件绕过。'
     } finally { $controller.Dispose() }
 }
 
 function Start-QPService {
     param([hashtable]$Paths, [hashtable]$Config)
+    Assert-QPSystemConsent $Paths $Config
     Assert-QPService $Paths $Config (Get-QPService)
     $controller = New-QPServiceController
     try {
@@ -1318,16 +1423,18 @@ function Wait-QPHealthy {
 
 function Assert-QPLayout {
     param([hashtable]$Paths)
-    Assert-QPAcl $Paths.Code 'Code' -Root
-    Assert-QPAcl $Paths.State 'State' -Root
-    Assert-QPAcl $Paths.Data 'Data' -Root
+    $config = @{}
+    if ([IO.File]::Exists($Paths.Config)) { $config = Read-QPConfig $Paths -AllowLegacy }
+    $codeKind = Get-QPStorageKind $config 'Code'; $stateKind = Get-QPStorageKind $config 'State'; $dataKind = Get-QPStorageKind $config 'Data'
+    Assert-QPAcl $Paths.Code $codeKind -Root
+    Assert-QPAcl $Paths.State $stateKind -Root
+    Assert-QPAcl $Paths.Data $dataKind -Root
     $allowed = @('panel.exe', 'panel.previous.exe', 'panel.next.exe', 'install.ps1', 'update.ps1', 'qqon.ps1', 'qqon.cmd')
     foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($Paths.Code)) {
         Assert-QP ([IO.Path]::GetFileName($entry) -cin $allowed) 'Unknown file in managed code directory; no automatic adoption or deletion.'
-        Assert-QPAcl $entry 'Code' -File
+        Assert-QPAcl $entry $codeKind -File
     }
-    # Inherit normally so runtime-created data is private to the virtual identity.
-    # No automatic ACL repair: existing roots or data files must already be safe.
+    # Validate nested account/TOTP/logs/jobs as well as the data root.
     $pending = [Collections.Generic.Stack[string]]::new()
     $pending.Push($Paths.Data); $count = 0; $clock = [Diagnostics.Stopwatch]::StartNew()
     while ($pending.Count -gt 0) {
@@ -1336,7 +1443,7 @@ function Assert-QPLayout {
             $count++; Assert-QP ($count -le 100000 -and $clock.Elapsed.TotalSeconds -lt 30) 'Private data validation limit exceeded; refusing without changing ACLs.'
             Assert-QPPlainPath $entry
             $isDirectory = ([IO.File]::GetAttributes($entry) -band [IO.FileAttributes]::Directory) -ne 0
-            Assert-QPAcl $entry 'Data' -File:(-not $isDirectory)
+            Assert-QPAcl $entry $dataKind -File:(-not $isDirectory)
             if ($isDirectory) { $pending.Push($entry) }
         }
     }
@@ -1352,7 +1459,8 @@ function Assert-QPManagers {
 function Set-QPServiceConfig {
     param([hashtable]$Paths, [hashtable]$Before, [hashtable]$After)
     Assert-QPService $Paths $Before (Get-QPService)
-    [void](Read-QPConfigValue $After)
+    [void](Read-QPConfigValue $After -AllowLegacy)
+    Assert-QP ((Get-QPPrivilegeMode $Before) -ceq (Get-QPPrivilegeMode $After)) '普通服务配置事务不能改变权限身份。[QP_PRIVILEGE]'
     $sc = [IO.Path]::Combine([Environment]::SystemDirectory, 'sc.exe')
     [void](Invoke-QPProcess $sc @('config', 'QQONPanel', 'binPath=', (Get-QPServiceCommand $Paths $After)))
     Assert-QPService $Paths $After (Get-QPService)
@@ -1363,7 +1471,7 @@ function Get-QPTransactionServiceConfig {
     $service = Get-QPService
     Assert-QP ($null -ne $service) '恢复所需的 QQONPanel 服务不存在。'
     foreach ($config in @($Transaction['old'], $Transaction['new'])) {
-        if ($null -ne $config -and $service.PathName -ceq (Get-QPServiceCommand $Paths $config)) { Assert-QPService $Paths $config $service; return ,$config }
+        if ($null -ne $config -and $service.PathName -ceq (Get-QPServiceCommand $Paths $config) -and $service.StartName -ieq (Get-QPServiceIdentity $config)) { Assert-QPService $Paths $config $service; return ,$config }
     }
     throw 'SCM 命令既不匹配旧配置也不匹配新配置；拒绝修改未知服务。'
 }
@@ -1390,7 +1498,7 @@ function Invoke-QPConfigTransaction {
     Assert-QP (-not [IO.File]::Exists($Paths.Journal)) '已有未完成事务，请先确认恢复。'
     $service = Get-QPService; Assert-QPService $Paths $Old $service
     Assert-QP ($service.State -cin @('Running', 'Stopped')) '服务正处于过渡状态，请稍后重试。'
-    $transaction = @{ format = 2; kind = $Kind; phase = 'prepared'; old = $Old; new = $New; wasRunning = ($service.State -ceq 'Running') }
+    $transaction = @{ format = $New['format']; kind = $Kind; phase = 'prepared'; old = $Old; new = $New; wasRunning = ($service.State -ceq 'Running') }
     Assert-QPActiveTls $Paths $New -Inspect
     Write-QPAtomicJson $Paths.Journal $transaction
     try {
@@ -1408,6 +1516,338 @@ function Invoke-QPConfigTransaction {
         catch { throw '访问配置变更失败，回滚未完成；事务日志及新旧证书已保留，请修复后重新确认恢复。账户数据未重置。' }
         throw '访问配置变更失败，已恢复旧配置、SCM 命令及原服务状态；账户数据未重置，新旧证书代次均保留。'
     }
+}
+
+function Get-QPPrivilegeJournalPath {
+    param([hashtable]$Paths)
+    return [IO.Path]::Combine($Paths.State, 'privilege-transaction.json')
+}
+
+function Get-QPPrivilegeBackupPath {
+    param([hashtable]$Paths, [string]$Generation)
+    Assert-QP ($Generation -cmatch '\A[0-9a-f]{32}\z') '权限备份代次无效。[QP_PRIVILEGE]'
+    return [IO.Path]::Combine($Paths.State, 'privilege-backups', $Generation)
+}
+
+function Enter-QPPrivilegeSecurity {
+    # RestorePrivilege is needed to restore the original virtual-account owner.
+    # Scope affects only this process token and restores its previous setting.
+    if ($null -eq ('QQONPanel.RestorePrivilegeScope' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+namespace QQONPanel {
+  public sealed class RestorePrivilegeScope : IDisposable {
+    [StructLayout(LayoutKind.Sequential)] struct Luid { public uint Low; public int High; }
+    [StructLayout(LayoutKind.Sequential)] struct Privileges { public uint Count; public Luid Id; public uint Attributes; }
+    [DllImport("advapi32.dll", SetLastError=true)] static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+    [DllImport("advapi32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool LookupPrivilegeValue(string system, string name, out Luid value);
+    [DllImport("advapi32.dll", SetLastError=true)] static extern bool AdjustTokenPrivileges(IntPtr token, bool disable, ref Privileges value, uint size, out Privileges previous, out uint length);
+    [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+    IntPtr token; Privileges previous;
+    public RestorePrivilegeScope() {
+      if (!OpenProcessToken(GetCurrentProcess(), 0x28, out token)) throw new Win32Exception();
+      try {
+        Luid id; if (!LookupPrivilegeValue(null, "SeRestorePrivilege", out id)) throw new Win32Exception();
+        Privileges value = new Privileges { Count=1, Id=id, Attributes=2 }; uint length;
+        if (!AdjustTokenPrivileges(token, false, ref value, (uint)Marshal.SizeOf(typeof(Privileges)), out previous, out length) || Marshal.GetLastWin32Error()!=0) throw new Win32Exception();
+      } catch { CloseHandle(token); token=IntPtr.Zero; throw; }
+    }
+    public void Dispose() {
+      if (token==IntPtr.Zero) return;
+      Privileges ignored; uint length;
+      try { if (!AdjustTokenPrivileges(token, false, ref previous, (uint)Marshal.SizeOf(typeof(Privileges)), out ignored, out length)) throw new Win32Exception(); }
+      finally { CloseHandle(token); token=IntPtr.Zero; }
+    }
+  }
+}
+'@ -ErrorAction Stop
+    }
+    return [QQONPanel.RestorePrivilegeScope]::new()
+}
+
+function Get-QPPrivilegeEntryPath {
+    param([hashtable]$Paths, [hashtable]$Entry)
+    Assert-QP ($Entry['scope'] -is [string] -and $Entry['scope'] -cin @('code', 'state', 'data', 'tls') -and $Entry['relative'] -is [string] -and $Entry['directory'] -is [bool]) '权限快照路径字段无效。[QP_PRIVILEGE]'
+    $relative = $Entry['relative']; $root = $Paths.State
+    switch ($Entry['scope']) { 'code' { $root = $Paths.Code }; 'data' { $root = $Paths.Data }; 'tls' { $root = [IO.Path]::Combine($Paths.State, 'tls') } }
+    if (-not $relative) { Assert-QP $Entry['directory'] '权限根条目必须为目录。[QP_PRIVILEGE]'; return $root }
+    Assert-QP ($relative.Length -le 240 -and $relative -cnotmatch '[/:\x00-\x1f]' -and -not $relative.StartsWith('\')) '权限快照仅允许根内相对路径。[QP_PRIVILEGE]'
+    foreach ($part in $relative.Split([char]'\')) { Assert-QP ($part -notin @('', '.', '..') -and $part -notmatch '[ .]\z') '权限快照路径不规范。[QP_PRIVILEGE]' }
+    if ($Entry['scope'] -ceq 'state') { Assert-QP (-not $Entry['directory'] -and $relative -cin @('install.json', 'management-consent.json')) '拒绝权限事务以外的状态文件。[QP_PRIVILEGE]' }
+    if ($Entry['scope'] -ceq 'code') { Assert-QP (-not $Entry['directory'] -and $relative -cin @('panel.exe', 'panel.previous.exe', 'panel.next.exe', 'install.ps1', 'update.ps1', 'qqon.ps1', 'qqon.cmd')) '拒绝未知程序目录条目。[QP_PRIVILEGE]' }
+    if ($Entry['scope'] -ceq 'tls') { Assert-QP (($Entry['directory'] -and $relative -cmatch '\A[0-9a-f]{32}\z') -or (-not $Entry['directory'] -and $relative -cmatch '\A[0-9a-f]{32}\\(?:cert|key)\.pem\z')) '拒绝未知 TLS 代次条目。[QP_PRIVILEGE]' }
+    $path = [IO.Path]::Combine($root, $relative); Assert-QPPlainPath $path -AllowMissing
+    return $path
+}
+
+function Get-QPPrivilegeEntries {
+    param([hashtable]$Paths)
+    $result = [Collections.Generic.List[object]]::new(); $pending = [Collections.Generic.Queue[object]]::new()
+    foreach ($scope in @('code', 'state', 'data', 'tls')) {
+        $entry = @{ scope = $scope; relative = ''; directory = $true }
+        $path = Get-QPPrivilegeEntryPath $Paths $entry
+        if ($scope -ceq 'tls' -and -not [IO.Directory]::Exists($path)) { Assert-QPPlainPath $path -AllowMissing; Assert-QP (-not [IO.File]::Exists($path)) 'TLS 根不能是文件。'; continue }
+        $pending.Enqueue($entry)
+    }
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    while ($pending.Count -gt 0) {
+        $entry = $pending.Dequeue(); $path = Get-QPPrivilegeEntryPath $Paths $entry
+        Assert-QPPlainPath $path
+        Assert-QP ($result.Count -lt 10000 -and $clock.Elapsed.TotalSeconds -lt 120) '权限快照超出 10000 条目或 120 秒限制。[QP_PRIVILEGE]'
+        $actualDirectory = ([IO.File]::GetAttributes($path) -band [IO.FileAttributes]::Directory) -ne 0
+        Assert-QP ($actualDirectory -eq $entry['directory']) '权限快照文件类型发生变化。[QP_PRIVILEGE]'
+        [void]$result.Add($entry)
+        if (-not $entry['directory']) { continue }
+        if ($entry['scope'] -ceq 'state') {
+            foreach ($name in @('install.json', 'management-consent.json')) {
+                $file = [IO.Path]::Combine($path, $name); Assert-QPPlainPath $file -AllowMissing
+                Assert-QP (-not [IO.Directory]::Exists($file)) '固定状态文件不能是目录。[QP_PRIVILEGE]'
+                if ([IO.File]::Exists($file)) { $pending.Enqueue(@{ scope = 'state'; relative = $name; directory = $false }) }
+            }
+        } else {
+            foreach ($child in [IO.Directory]::EnumerateFileSystemEntries($path)) {
+                Assert-QP ($pending.Count + $result.Count -lt 10000) '权限快照条目过多。[QP_PRIVILEGE]'
+                Assert-QPPlainPath $child
+                $relative = [IO.Path]::GetFileName($child)
+                if ($entry['relative']) { $relative = $entry['relative'] + '\' + $relative }
+                $pending.Enqueue(@{ scope = $entry['scope']; relative = $relative; directory = (([IO.File]::GetAttributes($child) -band [IO.FileAttributes]::Directory) -ne 0) })
+            }
+        }
+    }
+    return ,($result.ToArray())
+}
+
+function Get-QPEntryKind {
+    param([hashtable]$Entry)
+    switch ($Entry['scope']) { 'code' { return 'Code' }; 'data' { return 'Data' }; 'tls' { return 'Tls' }; default { if ($Entry['directory']) { return 'State' }; return 'Admin' } }
+}
+
+function Test-QPSameSecurityDescriptor {
+    param([string]$Expected, [string]$Actual)
+    $left = [Security.AccessControl.RawSecurityDescriptor]::new($Expected); $right = [Security.AccessControl.RawSecurityDescriptor]::new($Actual)
+    if ($left.Owner.Value -cne $right.Owner.Value -or $left.Group.Value -cne $right.Group.Value) { return $false }
+    $protected = [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected
+    if (($left.ControlFlags -band $protected) -ne ($right.ControlFlags -band $protected)) { return $false }
+    # Windows may add SE_DACL_AUTO_INHERITED when persisting an otherwise exact
+    # DACL. Compare every ACE byte and the protection flag, not that bookkeeping bit.
+    $a = New-Object byte[] $left.DiscretionaryAcl.BinaryLength; $b = New-Object byte[] $right.DiscretionaryAcl.BinaryLength
+    $left.DiscretionaryAcl.GetBinaryForm($a, 0); $right.DiscretionaryAcl.GetBinaryForm($b, 0)
+    return [Convert]::ToBase64String($a) -ceq [Convert]::ToBase64String($b)
+}
+
+function Set-QPEntrySecurity {
+    param([string]$Path, [bool]$Directory, [string]$Sddl = '', [string]$Kind = 'Admin')
+    Assert-QPPlainPath $Path
+    $acl = New-QPSecurity $Kind -File:(-not $Directory)
+    if ($Sddl) { $acl.SetSecurityDescriptorSddlForm($Sddl, [Security.AccessControl.AccessControlSections]'Owner, Group, Access') }
+    if ($Directory) { [IO.Directory]::SetAccessControl($Path, $acl) }
+    else {
+        Initialize-QPProcessRunner; $guard = [QQONPanel.NativeProcess]::OpenRegularRead($Path)
+        try { [IO.File]::SetAccessControl($Path, $acl) } finally { $guard.Dispose() }
+    }
+    if ($Sddl) {
+        if ($Directory) { $actual = [IO.Directory]::GetAccessControl($Path) } else { $actual = [IO.File]::GetAccessControl($Path) }
+        Assert-QP (Test-QPSameSecurityDescriptor $Sddl ($actual.GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]'Owner, Group, Access'))) '恢复后 owner/group/DACL 或保护标记不匹配。[QP_PRIVILEGE]'
+    }
+}
+
+function New-QPPrivilegeSnapshot {
+    param([hashtable]$Paths, [hashtable]$Transaction)
+    $backup = Get-QPPrivilegeBackupPath $Paths $Transaction['backup']; $root = [IO.Path]::GetDirectoryName($backup)
+    if (-not [IO.Directory]::Exists($root)) { New-QPPrivateDirectory $root 'Admin' }
+    Assert-QPAcl $root 'Admin' -Root; New-QPPrivateDirectory $backup 'Admin'
+    $entries = Get-QPPrivilegeEntries $Paths; $budget = @{ Count = 0; Size = [long]0 }; $index = 0
+    foreach ($entry in $entries) {
+        $path = Get-QPPrivilegeEntryPath $Paths $entry; $kind = Get-QPEntryKind $entry
+        Assert-QPAcl $path $kind -File:(-not $entry['directory']) -Root:($entry['directory'] -and -not $entry['relative'])
+        if ($entry['directory']) { $acl = [IO.Directory]::GetAccessControl($path) } else { $acl = [IO.File]::GetAccessControl($path) }
+        $entry['sddl'] = $acl.GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]'Owner, Group, Access')
+        Assert-QP ($entry['sddl'].Length -le 8192) '权限快照 ACL 过长。[QP_PRIVILEGE]'
+        $entry['blob'] = $null; $entry['sha256'] = $null
+        if (-not $entry['directory']) {
+            $entry['blob'] = $index.ToString('D5', [Globalization.CultureInfo]::InvariantCulture) + '.bin'; $index++
+            $target = [IO.Path]::Combine($backup, $entry['blob'])
+            Copy-QPBackupFile $path $target $budget $kind
+            $entry['sha256'] = Get-QPPrivilegeFileHash $target
+        }
+    }
+    $record = @{ format = 1; entries = $entries; serviceIdentity = Get-QPServiceIdentity $Transaction['old']; serviceCommand = Get-QPServiceCommand $Paths $Transaction['old'] }
+    $bytes = ConvertTo-QPJsonBytes $record
+    Assert-QP ($bytes.Length -le 16777216) '权限快照元数据超过 16 MiB。[QP_PRIVILEGE]'
+    Write-QPNewFile ([IO.Path]::Combine($backup, 'snapshot.json')) $bytes 'Admin'
+    return Get-QPSha256 $bytes
+}
+
+function Get-QPPrivilegeFileHash {
+    param([string]$Path)
+    Initialize-QPProcessRunner; $stream = [QQONPanel.NativeProcess]::OpenRegularRead($Path); $sha = [Security.Cryptography.SHA256]::Create()
+    try { Assert-QP ($stream.Length -le 536870912) '权限快照文件超限。'; return ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '').ToLowerInvariant() }
+    finally { $sha.Dispose(); $stream.Dispose() }
+}
+
+function Read-QPPrivilegeTransaction {
+    param([hashtable]$Paths)
+    $journal = Get-QPPrivilegeJournalPath $Paths; Assert-QPAcl $journal 'Admin' -File
+    $value = ConvertFrom-QPJson (Read-QPFile $journal 32768 -Regular)
+    Assert-QPFields $value @('format', 'kind', 'phase', 'old', 'new', 'wasRunning', 'backup', 'snapshotSHA256', 'oldConsent')
+    Assert-QP ((Test-QPInteger $value['format'] 1 1) -and $value['kind'] -ceq 'privilege' -and $value['phase'] -cin @('prepared', 'backed-up', 'ready') -and $value['wasRunning'] -is [bool]) '权限日志格式无效。[QP_PRIVILEGE]'
+    [void](Get-QPPrivilegeBackupPath $Paths $value['backup'])
+    $old = Read-QPConfigValue $value['old']; $new = Read-QPConfigValue $value['new']
+    Assert-QP ($old['format'] -eq 3 -and $new['format'] -eq 3 -and (Get-QPPrivilegeMode $old) -ceq 'restricted' -and (Get-QPPrivilegeMode $new) -ceq 'system') '权限日志只能执行独立受限到系统模式迁移。[QP_PRIVILEGE]'
+    $fixed = @($old.Keys | Where-Object { $_ -cnotin @('privilegeMode', 'privilegeConsent') })
+    Assert-QP (Test-QPSameFields $old $new $fixed) '权限事务不能改变应用、访问方式或管理器。[QP_PRIVILEGE]'
+    if ($null -ne $value['oldConsent']) { [void](Read-QPPrivilegeConsent $value['oldConsent']) }
+    if ($value['phase'] -ceq 'prepared') { Assert-QP ($null -eq $value['snapshotSHA256']) '未备份阶段不可声明完成快照。[QP_PRIVILEGE]' }
+    else { Assert-QP ($value['snapshotSHA256'] -is [string] -and $value['snapshotSHA256'] -cmatch '\A[0-9a-f]{64}\z') '权限快照摘要无效。[QP_PRIVILEGE]' }
+    return ,$value
+}
+
+function Assert-QPPrivilegeDescriptor {
+    param([hashtable]$Entry)
+    Assert-QP ($Entry['sddl'] -is [string] -and $Entry['sddl'].Length -le 8192) '权限快照缺少原 owner/DACL。[QP_PRIVILEGE]'
+    $descriptor = [Security.AccessControl.RawSecurityDescriptor]::new($Entry['sddl'])
+    $owners = @('S-1-5-18', 'S-1-5-32-544'); if ($Entry['scope'] -ceq 'data') { $owners += (Get-QPServiceSid).Value }
+    Assert-QP ($null -ne $descriptor.Owner -and $descriptor.Owner.Value -cin $owners -and $null -ne $descriptor.DiscretionaryAcl) '权限快照 owner/DACL 不可信。[QP_PRIVILEGE]'
+    $rights = Get-QPRights (Get-QPEntryKind $Entry)
+    foreach ($ace in $descriptor.DiscretionaryAcl) {
+        Assert-QP ($ace -is [Security.AccessControl.CommonAce] -and $ace.AceQualifier -eq [Security.AccessControl.AceQualifier]::AccessAllowed -and -not $ace.IsCallback -and $rights.ContainsKey($ace.SecurityIdentifier.Value)) '权限快照含未知访问规则。[QP_PRIVILEGE]'
+        $max = [long]$rights[$ace.SecurityIdentifier.Value] -bor [long][Security.AccessControl.FileSystemRights]::Synchronize
+        Assert-QP (([long]$ace.AccessMask -band (-bnot $max)) -eq 0) '权限快照含过度访问规则。[QP_PRIVILEGE]'
+    }
+}
+
+function Read-QPPrivilegeSnapshot {
+    param([hashtable]$Paths, [hashtable]$Transaction)
+    $backup = Get-QPPrivilegeBackupPath $Paths $Transaction['backup']; Assert-QPAcl ([IO.Path]::GetDirectoryName($backup)) 'Admin' -Root; Assert-QPAcl $backup 'Admin' -Root
+    $path = [IO.Path]::Combine($backup, 'snapshot.json'); Assert-QPAcl $path 'Admin' -File
+    $bytes = Read-QPFile $path 16777216 -Regular
+    Assert-QP ((Get-QPSha256 $bytes) -ceq $Transaction['snapshotSHA256']) '权限快照摘要发生变化。[QP_PRIVILEGE]'
+    $value = ConvertFrom-QPJson $bytes 16777216; Assert-QPFields $value @('format', 'entries', 'serviceIdentity', 'serviceCommand')
+    Assert-QP ($value['format'] -eq 1 -and $value['entries'] -is [array] -and $value['entries'].Count -le 10000 -and $value['serviceIdentity'] -ceq (Get-QPServiceIdentity $Transaction['old']) -and $value['serviceCommand'] -ceq (Get-QPServiceCommand $Paths $Transaction['old'])) '权限快照服务定义无效。[QP_PRIVILEGE]'
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase); $blobs = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($entry in $value['entries']) {
+        Assert-QPFields $entry @('scope', 'relative', 'directory', 'sddl', 'blob', 'sha256')
+        $target = Get-QPPrivilegeEntryPath $Paths $entry; Assert-QP ($seen.Add($target)) '权限快照路径重复。[QP_PRIVILEGE]'
+        Assert-QPPrivilegeDescriptor $entry
+        if ($entry['directory']) { Assert-QP ($null -eq $entry['blob'] -and $null -eq $entry['sha256']) '目录不能引用文件内容。[QP_PRIVILEGE]' }
+        else {
+            Assert-QP ($entry['blob'] -is [string] -and $entry['blob'] -cmatch '\A[0-9]{5}\.bin\z' -and $blobs.Add($entry['blob']) -and $entry['sha256'] -cmatch '\A[0-9a-f]{64}\z') '权限备份文件引用无效。[QP_PRIVILEGE]'
+            $file = [IO.Path]::Combine($backup, $entry['blob']); Assert-QPAcl $file 'Admin' -File
+            Assert-QP ((Get-QPPrivilegeFileHash $file) -ceq $entry['sha256']) '权限备份文件摘要不一致。[QP_PRIVILEGE]'
+        }
+    }
+    foreach ($required in @($Paths.Code, $Paths.State, $Paths.Data, $Paths.Config, $Paths.Installer, $Paths.Updater, $Paths.Binary)) { Assert-QP ($seen.Contains($required)) '权限快照缺少必要条目。[QP_PRIVILEGE]' }
+    return ,$value
+}
+
+function Set-QPPrivilegeIdentity {
+    param([hashtable]$Paths, [hashtable]$Before, [hashtable]$After)
+    $service = Get-QPService; Assert-QPService $Paths $Before $service
+    Assert-QP ($service.State -ceq 'Stopped') '切换权限身份前服务必须停止。[QP_PRIVILEGE]'
+    Assert-QPSystemConsent $Paths $After
+    $sc = [IO.Path]::Combine([Environment]::SystemDirectory, 'sc.exe')
+    [void](Invoke-QPProcess $sc @('config', 'QQONPanel', 'obj=', (Get-QPServiceIdentity $After)))
+    Assert-QPService $Paths $After (Get-QPService)
+}
+
+function Undo-QPPrivilege {
+    param([hashtable]$Paths, [hashtable]$Transaction)
+    $old = $Transaction['old']; $journal = Get-QPPrivilegeJournalPath $Paths
+    $actual = Get-QPTransactionServiceConfig $Paths $Transaction
+    Stop-QPServiceAndWait $Paths $actual
+    if ($Transaction['phase'] -ceq 'prepared') {
+        Assert-QPManagers $Paths $old
+        Assert-QP (Test-QPSameFields $old (Read-QPConfig $Paths) @($old.Keys)) '备份未完成却修改了配置，拒绝恢复。[QP_PRIVILEGE]'
+        Assert-QP ((Get-QPServiceIdentity $actual) -ceq (Get-QPServiceIdentity $old)) '备份前不应改变服务身份。[QP_PRIVILEGE]'
+    } else {
+        $snapshot = Read-QPPrivilegeSnapshot $Paths $Transaction; $backup = Get-QPPrivilegeBackupPath $Paths $Transaction['backup']
+        if ((Get-QPPrivilegeMode $actual) -cne 'restricted') { Set-QPPrivilegeIdentity $Paths $actual $old }
+        # Restore exact config/consent bytes. Runtime account, TOTP and log contents
+        # are intentionally never rewound, including writes made by a health probe.
+        foreach ($entry in $snapshot['entries']) {
+            if ($entry['scope'] -ceq 'state' -and -not $entry['directory']) {
+                $target = Get-QPPrivilegeEntryPath $Paths $entry; $source = [IO.Path]::Combine($backup, $entry['blob'])
+                $bytes = Read-QPFile $source 32768 -Regular
+                $temporary = $target + '.restore-' + $Transaction['backup']
+                Assert-QPPlainPath $temporary -AllowMissing
+                if ([IO.File]::Exists($temporary)) { Assert-QPAcl $temporary 'Admin' -File; Assert-QP ((Get-QPPrivilegeFileHash $temporary) -ceq $entry['sha256']) '拒绝未知恢复暂存文件。'; [IO.File]::Delete($temporary) }
+                Write-QPNewFile $temporary $bytes 'Admin'
+                if ([IO.File]::Exists($target)) { Assert-QPAcl $target 'Admin' -File; [IO.File]::Replace($temporary, $target, [NullString]::Value) } else { [IO.File]::Move($temporary, $target) }
+            } elseif ($entry['scope'] -cin @('code', 'tls') -and -not $entry['directory']) {
+                Assert-QP ((Get-QPPrivilegeFileHash (Get-QPPrivilegeEntryPath $Paths $entry)) -ceq $entry['sha256']) '权限事务期间程序或证书字节变化，拒绝覆盖未知文件。[QP_PRIVILEGE]'
+            }
+        }
+        if ($null -eq $Transaction['oldConsent']) { Remove-QPManagedFile (Get-QPConsentPath $Paths) 'Admin' }
+        # Parent-first restoration ensures inherited descendants end with their
+        # exact original descriptor, including virtual-account owner and protection.
+        $currentEntries = Get-QPPrivilegeEntries $Paths
+        $known = @{}
+        foreach ($entry in $snapshot['entries']) { $known[(Get-QPPrivilegeEntryPath $Paths $entry)] = $entry }
+        foreach ($entry in $currentEntries) {
+            $path = Get-QPPrivilegeEntryPath $Paths $entry
+            if ($known.ContainsKey($path)) { Set-QPEntrySecurity $path $entry['directory'] $known[$path]['sddl'] }
+            else {
+                Assert-QP ($entry['scope'] -ceq 'data') '恢复时发现权限快照以外的非数据条目。[QP_PRIVILEGE]'
+                Set-QPEntrySecurity $path $entry['directory'] '' 'Data'
+            }
+        }
+        foreach ($entry in $snapshot['entries']) { Assert-QPPlainPath (Get-QPPrivilegeEntryPath $Paths $entry) }
+        Assert-QPManagers $Paths $old; Assert-QPLayout $Paths; Assert-QPActiveTls $Paths $old
+    }
+    Restore-QPOriginalService $Paths $old $Transaction['wasRunning']
+    Remove-QPManagedFile $journal 'Admin'
+}
+
+function Resume-QPPrivilege {
+    param([hashtable]$Paths)
+    $transaction = Read-QPPrivilegeTransaction $Paths
+    $scope = Enter-QPPrivilegeSecurity
+    try { Undo-QPPrivilege $Paths $transaction } finally { $scope.Dispose() }
+    [Console]::WriteLine('已恢复中断前的受限身份、owner/DACL、配置和授权记录；账户/TOTP/日志未重置，独立敏感快照保留。重新授权必须再次运行 qqon privilege。')
+}
+
+function Invoke-QPPrivilege {
+    param([hashtable]$Paths, [hashtable]$Old, $Consent)
+    Assert-QP ($null -ne $Consent) '没有独立最高权限同意，未迁移服务。[QP_PRIVILEGE]'
+    [void](Read-QPPrivilegeConsent $Consent); [void](Read-QPConfigValue $Old)
+    Assert-QP ($Old['format'] -eq 3) '请先通过已校验 v0.7 安装器独立迁移管理器；旧管理器不能直接授权。[QP_PRIVILEGE]'
+    if ((Get-QPPrivilegeMode $Old) -ceq 'system') { Assert-QPSystemConsent $Paths $Old; [Console]::WriteLine('已是独立授权的系统模式，未改写同意时间或权限。'); return }
+    Assert-QP ((ConvertTo-QPVersion $Old['version']) -ge [version]'0.7.0') '请先 qqon update 升级应用至 v0.7.0 或以上，再单独授权。[QP_PRIVILEGE]'
+    $journal = Get-QPPrivilegeJournalPath $Paths
+    Assert-QP (-not [IO.File]::Exists($journal) -and -not [IO.File]::Exists($Paths.Journal)) '必须先独立恢复未完成事务。[QP_PRIVILEGE]'
+    Assert-QPLayout $Paths; Assert-QPManagers $Paths $Old; Assert-QPShortcuts $Paths; Assert-QPBinary $Paths.Binary $Old; Assert-QPActiveTls $Paths $Old
+    $service = Get-QPService; Assert-QPService $Paths $Old $service
+    Assert-QP ($service.State -cin @('Running', 'Stopped')) '服务处于过渡状态，不能开始授权迁移。[QP_PRIVILEGE]'
+    $new = $Old.Clone(); $new['privilegeMode'] = 'system'; $new['privilegeConsent'] = $Consent
+    $transaction = @{ format = 1; kind = 'privilege'; phase = 'prepared'; old = $Old; new = $new; wasRunning = ($service.State -ceq 'Running'); backup = [guid]::NewGuid().ToString('N'); snapshotSHA256 = $null; oldConsent = (Read-QPManagementConsent $Paths -AllowMissing -Snapshot) }
+    $scope = Enter-QPPrivilegeSecurity
+    try {
+        Write-QPAtomicJson $journal $transaction
+        try {
+            [void](Read-QPPrivilegeTransaction $Paths)
+            Stop-QPServiceAndWait $Paths $Old
+            $transaction['snapshotSHA256'] = New-QPPrivilegeSnapshot $Paths $transaction
+            $transaction['phase'] = 'backed-up'; Write-QPAtomicJson $journal $transaction
+            $snapshot = Read-QPPrivilegeSnapshot $Paths $transaction
+            foreach ($entry in $snapshot['entries']) { Set-QPEntrySecurity (Get-QPPrivilegeEntryPath $Paths $entry) $entry['directory'] }
+            Write-QPManagementConsent $Paths $Consent
+            Set-QPPrivilegeIdentity $Paths $Old $new
+            Write-QPAtomicJson $Paths.Config $new
+            $transaction['phase'] = 'ready'; Write-QPAtomicJson $journal $transaction
+            Assert-QPLayout $Paths; Assert-QPActiveTls $Paths $new
+            Start-QPService $Paths $new; Wait-QPHealthy $Paths $new
+            if (-not $transaction['wasRunning']) { Stop-QPServiceAndWait $Paths $new }
+            Remove-QPManagedFile $journal 'Admin'
+        } catch {
+            try { Undo-QPPrivilege $Paths $transaction }
+            catch { throw '最高权限迁移失败且回滚未完成；权限日志和独立快照已保留，禁止继续普通更新。修复后确认恢复，不会重置账户。[QP_PRIVILEGE]' }
+            throw '最高权限迁移失败；已恢复旧 owner/DACL、服务身份、配置和原授权记录，账户/TOTP/日志未重置。[QP_PRIVILEGE]'
+        }
+    } finally { $scope.Dispose() }
+    [Console]::WriteLine('最高权限已独立授权：LocalSystem；固定授权记录受 Admin/SYSTEM 保护。含账户/TOTP/日志/TLS/管理器的敏感快照：' + (Get-QPPrivilegeBackupPath $Paths $transaction['backup']))
 }
 
 function Get-QPBackupDirectory {
@@ -1590,7 +2030,7 @@ function Get-QPMigrationStagePath {
 
 function Remove-QPMigrationStaging {
     param([hashtable]$Paths, [hashtable]$Transaction)
-    Assert-QP ($Transaction['format'] -eq 2 -and $Transaction['kind'] -ceq 'migrate') '仅允许清理已验证迁移事务的暂存文件。[QP_MIGRATION_STAGE]'
+    Assert-QP ($Transaction['format'] -in @(2, 3) -and $Transaction['kind'] -ceq 'migrate') '仅允许清理已验证迁移事务的暂存文件。[QP_MIGRATION_STAGE]'
     Assert-QPKnownLegacy $Transaction['old']
     Assert-QPAcl $Paths.Code 'Code' -Root; Assert-QPAcl $Paths.State 'State' -Root
     $targets = @(
@@ -1642,18 +2082,29 @@ function Undo-QPMigration {
     $saved = Read-QPConfigValue (ConvertFrom-QPJson (Read-QPFile $savedConfig 32768)) -AllowLegacy
     Assert-QP (Test-QPSameFields $old $saved @($old.Keys)) '独立事务备份与迁移旧配置不一致。'
     Stop-QPServiceAndWait $Paths $old
-    # Remove only this transaction's exact generated shortcuts before restoring the legacy wrapper.
-    $scriptPath = [IO.Path]::Combine($Paths.Code, 'qqon.ps1'); $cmdPath = [IO.Path]::Combine($Paths.Code, 'qqon.cmd')
-    if ([IO.File]::Exists($scriptPath) -or [IO.File]::Exists($cmdPath)) {
-        Assert-QP ((Get-QPFileHash $Paths.Updater 32768) -ceq $Transaction['new']['updaterSHA256']) '恢复旧快捷入口前，新更新器必须仍匹配本次事务摘要。'
-        $generated = Get-QPShortcutContent $Paths
-        foreach ($item in @(@{ Path = $scriptPath; Bytes = $generated.Script }, @{ Path = $cmdPath; Bytes = $generated.Command })) {
-            if ([IO.File]::Exists($item.Path)) {
-                Assert-QPAcl $item.Path 'Code' -File
-                Assert-QP ((Get-QPFileHash $item.Path 32768) -ceq (Get-QPSha256 $item.Bytes)) '迁移快捷入口已被修改，拒绝自动删除。'
-                Remove-QPManagedFile $item.Path 'Code'
-            }
-        }
+    # Accept only a shortcut generated by the pinned old or selected new wrapper.
+    # Old v0.6 shortcuts may be partially removed when a crash occurs.
+    $oldShortcut = $null
+    if ($old['format'] -eq 2) {
+        $backupUpdater = [IO.Path]::Combine($backup, 'update.ps1')
+        Assert-QPAcl $backupUpdater 'Admin' -File
+        Assert-QP ((Get-QPFileHash $backupUpdater 32768) -ceq $old['updaterSHA256']) '旧快捷模板摘要不匹配。'
+        $templatePaths = $Paths.Clone(); $templatePaths.Updater = $backupUpdater
+        $oldShortcut = Get-QPShortcutContent $templatePaths
+    }
+    $currentHash = Get-QPFileHash $Paths.Updater 32768
+    $generated = $null
+    if ($currentHash -ceq $Transaction['new']['updaterSHA256']) { $generated = Get-QPShortcutContent $Paths }
+    else { Assert-QP ($currentHash -ceq $old['updaterSHA256']) '当前更新器摘要不属于迁移事务。' }
+    foreach ($item in @(@{ Name = 'qqon.ps1'; Key = 'Script' }, @{ Name = 'qqon.cmd'; Key = 'Command' })) {
+        $path = [IO.Path]::Combine($Paths.Code, $item.Name)
+        if (-not [IO.File]::Exists($path)) { continue }
+        Assert-QPAcl $path 'Code' -File; $hash = Get-QPFileHash $path 32768
+        $allowed = @()
+        if ($null -ne $generated) { $allowed += Get-QPSha256 $generated[$item.Key] }
+        if ($null -ne $oldShortcut) { $allowed += Get-QPSha256 $oldShortcut[$item.Key] }
+        Assert-QP ($hash -cin $allowed) '迁移快捷入口已被修改，拒绝自动删除。'
+        Remove-QPManagedFile $path 'Code'
     }
     foreach ($item in @(@{ Name = 'install.ps1'; Digest = 'installerSHA256' }, @{ Name = 'update.ps1'; Digest = 'updaterSHA256' })) {
         $source = [IO.Path]::Combine($backup, $item.Name); $target = [IO.Path]::Combine($Paths.Code, $item.Name)
@@ -1663,6 +2114,7 @@ function Undo-QPMigration {
         Assert-QP ((Get-QPFileHash $target 524288) -cin @($old[$item.Digest], $Transaction['new'][$item.Digest])) '当前管理器不是本次事务的新旧版本，拒绝覆盖。'
         Write-QPAtomicCode $target $bytes $Transaction['backup']
     }
+    if ($old['format'] -eq 2) { Write-QPShortcuts $Paths }
     Write-QPAtomicJson $Paths.Config $old
     Restore-QPOriginalService $Paths $old $Transaction['wasRunning']
     Remove-QPManagedFile $Paths.Journal 'Admin'
@@ -1671,25 +2123,32 @@ function Undo-QPMigration {
 function Invoke-QPMigration {
     param([hashtable]$Paths, [string]$Version, [string]$Source)
     Assert-QPLayout $Paths
-    Assert-QP (-not [IO.File]::Exists($Paths.Journal)) '旧版有未完成事务，请先恢复，不可同时迁移管理器。'
-    foreach ($name in @('qqon.ps1', 'qqon.cmd')) { Assert-QP (-not [IO.File]::Exists([IO.Path]::Combine($Paths.Code, $name))) '旧版目录已有未知快捷入口，拒绝自动迁移或覆盖。' }
+    Assert-QP (-not [IO.File]::Exists($Paths.Journal) -and -not [IO.File]::Exists((Get-QPPrivilegeJournalPath $Paths))) '旧版有未完成事务，请先恢复，不可同时迁移管理器。'
     $old = Read-QPConfig $Paths -AllowLegacy
     Assert-QPKnownLegacy $old; Assert-QPManagers $Paths $old; Assert-QPBinary $Paths.Binary $old
+    if ($old['format'] -eq 1) {
+        foreach ($name in @('qqon.ps1', 'qqon.cmd')) { Assert-QP (-not [IO.File]::Exists([IO.Path]::Combine($Paths.Code, $name))) '旧版目录已有未知快捷入口，拒绝自动迁移或覆盖。' }
+    } else { Assert-QPShortcuts $Paths; Assert-QPActiveTls $Paths $old }
     $service = Get-QPService; Assert-QPService $Paths $old $service
     Assert-QP ($service.State -cin @('Running', 'Stopped')) '服务正处于过渡状态。'
     $metadata = Get-QPReleaseMetadata $Version
-    Assert-QP ((ConvertTo-QPVersion $metadata.Manifest['version']) -ge [version]'0.6.0') '新管理器迁移要求已发布且已校验的 v0.6.0 或以上安装器。'
+    Assert-QP ((ConvertTo-QPVersion $metadata.Manifest['version']) -ge [version]'0.7.0') '新管理器迁移要求已发布且已校验的 v0.7.0 或以上安装器。'
     Assert-QP ((Get-QPFileHash $Source 524288) -ceq $metadata.Sums['install.ps1']) '当前迁移安装器与所选官方发行版摘要不符。'
     $installer = Read-QPVerifiedAsset $metadata 'install.ps1'; $updater = Read-QPVerifiedAsset $metadata 'update.ps1'
-    $new = $old.Clone(); $new['format'] = 2; $new['accessMode'] = 'local'; if ($old['origin']) { $new['accessMode'] = 'proxy' }; $new['tls'] = $null
+    $new = $old.Clone(); $new['format'] = 3; $new['privilegeMode'] = 'restricted'; $new['privilegeConsent'] = $null
+    if ($old['format'] -eq 1) { $new['accessMode'] = 'local'; if ($old['origin']) { $new['accessMode'] = 'proxy' }; $new['tls'] = $null }
     $new['installerSHA256'] = $metadata.Sums['install.ps1']; $new['updaterSHA256'] = $metadata.Sums['update.ps1']
     [void](Read-QPConfigValue $new)
-    $transaction = @{ format = 2; kind = 'migrate'; phase = 'prepared'; old = $old; new = $new; wasRunning = ($service.State -ceq 'Running'); backup = [guid]::NewGuid().ToString('N') }
+    $transaction = @{ format = 3; kind = 'migrate'; phase = 'prepared'; old = $old; new = $new; wasRunning = ($service.State -ceq 'Running'); backup = [guid]::NewGuid().ToString('N') }
     Write-QPAtomicJson $Paths.Journal $transaction
     $backedUp = $false
     try {
         Stop-QPServiceAndWait $Paths $old
         $snapshot = New-QPBackupSnapshot $Paths $old $transaction['backup']; $backedUp = $true
+        if ($old['format'] -eq 2) {
+            Assert-QPShortcuts $Paths
+            foreach ($name in @('qqon.ps1', 'qqon.cmd')) { Remove-QPManagedFile ([IO.Path]::Combine($Paths.Code, $name)) 'Code' }
+        }
         Write-QPAtomicCode $Paths.Installer $installer $transaction['backup']; Write-QPAtomicCode $Paths.Updater $updater $transaction['backup']
         Write-QPShortcuts $Paths
         Write-QPAtomicJson $Paths.Config $new
@@ -1703,8 +2162,8 @@ function Invoke-QPMigration {
         } catch { throw '旧版管理器迁移失败且恢复未完成；独立事务备份和日志已保留，原账户数据未重置。' }
         throw '旧版管理器迁移失败；旧配置、旧管理器及原服务状态已恢复，账户未重置。'
     }
-    [Console]::WriteLine('旧版管理器已独立迁移为 format2；原应用、访问方式及账户保持不变。事务备份：' + $snapshot.Path)
-    [Console]::WriteLine('请先运行 qqon update 升级应用到 v0.6.0 或以上，再用 qqon config 启用公网 HTTPS。迁移未修改 PATH。')
+    [Console]::WriteLine('旧版管理器已独立迁移为 format3 restricted；原应用、服务身份、访问方式和账户保持不变。事务备份：' + $snapshot.Path)
+    [Console]::WriteLine('下一步先运行 qqon update --version v0.7.0 升级应用，再单独运行 qqon privilege 授权。管理器迁移不授权最高权限，不修改 PATH。')
     Show-QPAccessSummary $Paths $new
 }
 
@@ -1738,7 +2197,8 @@ function Undo-QPUpdate {
 
 function Invoke-QPUpdateTransaction {
     param([hashtable]$Paths, [hashtable]$Old, [hashtable]$New)
-    $transaction = @{ format = 2; kind = 'update'; phase = 'prepared'; old = $Old; new = $New }
+    Assert-QP (Test-QPSameFields $Old $New @('format', 'repository', 'service', 'listen', 'origin', 'healthHost', 'dataSchema', 'installerSHA256', 'updaterSHA256', 'accessMode', 'tls', 'privilegeMode', 'privilegeConsent')) '普通升级不能修改权限、授权或固定配置。[QP_PRIVILEGE]'
+    $transaction = @{ format = $New['format']; kind = 'update'; phase = 'prepared'; old = $Old; new = $New }
     Write-QPAtomicJson $Paths.Journal $transaction
     try {
         Stop-QPServiceAndWait $Paths $Old
@@ -1797,7 +2257,11 @@ function Resume-QPTransaction {
     if (-not [IO.File]::Exists($Paths.Binary)) { Assert-QPBinary $Paths.Candidate $config; [IO.File]::Move($Paths.Candidate, $Paths.Binary) }
     Assert-QPBinary $Paths.Binary $config
     Assert-QPActiveTls $Paths $config -Inspect
-    if ($config['format'] -eq 2) { Write-QPShortcuts $Paths }
+    if ($config['format'] -ge 2) { Write-QPShortcuts $Paths }
+    if ((Get-QPPrivilegeMode $config) -ceq 'system') {
+        foreach ($entry in (Get-QPPrivilegeEntries $Paths)) { Set-QPEntrySecurity (Get-QPPrivilegeEntryPath $Paths $entry) $entry['directory'] }
+        Write-QPManagementConsent $Paths $config['privilegeConsent']
+    }
     if ($null -eq (Get-QPService)) { Register-QPService $Paths $config }
     Assert-QPService $Paths $config (Get-QPService)
     Start-QPService $Paths $config
@@ -1816,16 +2280,18 @@ function Get-QPWindowsRecord {
 }
 
 function New-QPInstallConfig {
-    param([hashtable]$Metadata, [int]$Port, [string]$Origin)
+    param([hashtable]$Metadata, [int]$Port, [string]$Origin, $Consent = $null)
     $mode = 'local'; if ($Origin) { $mode = 'proxy' }
     $info = Get-QPAccess $mode $Port '' $Origin; $binary = Get-QPWindowsRecord $Metadata
     $value = @{
-        format = 2; repository = 'LinyuFiee/QQON-Panel'; service = 'QQONPanel'; listen = $info.listen
+        format = 3; privilegeMode = 'restricted'; privilegeConsent = $null
+        repository = 'LinyuFiee/QQON-Panel'; service = 'QQONPanel'; listen = $info.listen
         origin = $info.origin; healthHost = $info.healthHost; accessMode = $mode; tls = $null
         version = $Metadata.Manifest['version']; dataSchema = 1
         commit = $Metadata.Manifest['commit']; buildTime = $Metadata.Manifest['buildTime']; binarySize = $binary['size']
         binarySHA256 = $binary['sha256']; installerSHA256 = $Metadata.Sums['install.ps1']; updaterSHA256 = $Metadata.Sums['update.ps1']
     }
+    if ($null -ne $Consent) { $value['privilegeMode'] = 'system'; $value['privilegeConsent'] = Read-QPPrivilegeConsent $Consent }
     return Read-QPConfigValue $value
 }
 
@@ -1838,7 +2304,7 @@ function Set-QPAccessValue {
 }
 
 function Install-QPPanel {
-    param([hashtable]$Paths, [int]$Port, [string]$Origin, [string]$Version, [string]$Source, [hashtable]$AccessOptions = $null)
+    param([hashtable]$Paths, [int]$Port, [string]$Origin, [string]$Version, [string]$Source, [hashtable]$AccessOptions = $null, $Consent = $null)
     foreach ($path in @($Paths.Code, $Paths.State)) {
         Assert-QPPlainPath $path -AllowMissing
         Assert-QP (-not [IO.Directory]::Exists($path) -and -not [IO.File]::Exists($path)) '安装目录已存在。已有安装请使用状态、恢复或独立迁移，拒绝接管未知目录。'
@@ -1851,14 +2317,15 @@ function Install-QPPanel {
     Assert-QP ((Get-QPFileHash $Source 524288) -ceq $metadata.Sums['install.ps1']) '请运行所选发行版的已校验安装器，当前文件摘要不匹配。'
     $updater = Read-QPVerifiedAsset $metadata 'update.ps1'
     $archive = Read-QPVerifiedAsset $metadata 'panel-windows-amd64.zip'
-    $config = New-QPInstallConfig $metadata $Port $Origin
+    $config = New-QPInstallConfig $metadata $Port $Origin $Consent
+    if ($null -ne $Consent) { Assert-QP ((ConvertTo-QPVersion $config['version']) -ge [version]'0.7.0') '最高权限授权需要应用 v0.7.0 或以上，不能授权旧程序。[QP_PRIVILEGE]' }
     $access = Get-QPAccess $config['accessMode'] $Port '' $Origin
     if ($null -ne $AccessOptions) { $access = Get-QPAccess $AccessOptions.Mode $Port $AccessOptions.Host $Origin }
     $journaled = $false
     try {
-        New-QPPrivateDirectory $Paths.Code 'Code'
-        New-QPPrivateDirectory $Paths.State 'State'
-        New-QPPrivateDirectory $Paths.Data 'Data'
+        New-QPPrivateDirectory $Paths.Code (Get-QPStorageKind $config 'Code')
+        New-QPPrivateDirectory $Paths.State (Get-QPStorageKind $config 'State')
+        New-QPPrivateDirectory $Paths.Data (Get-QPStorageKind $config 'Data')
         Write-QPNewFile $Paths.Installer $installer 'Code'
         Write-QPNewFile $Paths.Updater $updater 'Code'
         Write-QPShortcuts $Paths
@@ -1869,9 +2336,13 @@ function Install-QPPanel {
             $tls = New-QPTlsGeneration $Paths $config $access $Paths.Candidate $AccessOptions.Certificate $AccessOptions.PrivateKey
         }
         $config = Set-QPAccessValue $config $access $tls
-        $transaction = @{ format = 2; kind = 'install'; phase = 'prepared'; old = $null; new = $config }
+        $transaction = @{ format = $config['format']; kind = 'install'; phase = 'prepared'; old = $null; new = $config }
         Write-QPAtomicJson $Paths.Journal $transaction; $journaled = $true
         [IO.File]::Move($Paths.Candidate, $Paths.Binary)
+        if ((Get-QPPrivilegeMode $config) -ceq 'system') {
+            foreach ($entry in (Get-QPPrivilegeEntries $Paths)) { Set-QPEntrySecurity (Get-QPPrivilegeEntryPath $Paths $entry) $entry['directory'] }
+            Write-QPManagementConsent $Paths $config['privilegeConsent']
+        }
         Register-QPService $Paths $config
         $transaction['phase'] = 'ready'; Write-QPAtomicJson $Paths.Journal $transaction
         Start-QPService $Paths $config
@@ -1893,6 +2364,7 @@ function Install-QPPanel {
 
 function Update-QPPanel {
     param([hashtable]$Paths, [string]$Version)
+    if ([IO.File]::Exists((Get-QPPrivilegeJournalPath $Paths))) { Resume-QPPrivilege $Paths; return }
     if ([IO.File]::Exists($Paths.Journal)) { Resume-QPTransaction $Paths; return }
     Assert-QPLayout $Paths
     $old = Read-QPConfig $Paths
@@ -1919,6 +2391,7 @@ function Update-QPPanel {
     Remove-QPManagedFile $Paths.Previous 'Code'
     try {
         Expand-QPWindowsZip $archive $binary $Paths.Candidate
+        if ((Get-QPPrivilegeMode $new) -ceq 'system') { Set-QPEntrySecurity $Paths.Candidate $false }
         Assert-QPBinary $Paths.Candidate $new
         Invoke-QPUpdateTransaction $Paths $old $new
     } finally {
@@ -2067,7 +2540,7 @@ function Read-QPAccessOptions {
 
 function Invoke-QPConfigure {
     param([hashtable]$Paths, [hashtable]$Config, [switch]$Renew, [bool]$Yes)
-    Assert-QP ($Config['format'] -eq 2) '访问配置仅支持 format2，请先单独确认旧版管理器迁移。'
+    Assert-QP ($Config['format'] -ge 2) '访问配置仅支持 format2/format3，请先单独确认旧版管理器迁移。'
     if ($Renew) {
         Assert-QP ($Config['accessMode'] -ceq 'public-selfsigned') '续期仅支持自签模式；导入证书请运行 qqon config 并重新提供证书和密钥。'
         $options = @{ AccessMode = 'public-selfsigned'; Port = [int]$Config['listen'].Split([char]':')[1]; PublicHost = $Config['tls']['host']; Origin = ''; Certificate = ''; PrivateKey = '' }
@@ -2096,8 +2569,10 @@ QQON-Panel 维护命令（只管理固定服务 QQONPanel）
   qqon update [--version vX.Y.Z] 更新应用；不重置账户
   qqon backup                  停服一致性私有备份，随后恢复原服务状态
   qqon config                  修改访问配置或导入新证书，失败回滚
+  qqon privilege               独立授权 LocalSystem，需专门输入“同意最高权限”
+  qqon privilege --accept-system-management [--yes]  独立非交互授权
   qqon tls renew               自签证书续期，使用新的不可变代次
-修改操作需要管理员及确认；--yes 仅表示明确的自动确认。config 仍需交互提供配置。
+修改操作需要管理员及确认；--yes 不授权最高权限，privilege 必须另用专用参数或中文同意。
 所有快捷入口均由已校验安装器生成，不增加发行资产。不修改防火墙或系统证书信任。
 '@)
 }
@@ -2108,18 +2583,19 @@ function Read-QPMaintenanceCommand {
     if ($null -eq $Words -or $Words.Count -eq 0) { $Words = @('menu') }
     Assert-QP ($Words.Count -le 5) '维护命令参数过多。'
     foreach ($word in $Words) { Assert-QP ($word -cmatch '\A[a-zA-Z0-9.-]{1,64}\z') '维护参数不在 ASCII 白名单中。' }
-    $action = $Words[0]; $index = 1; $yes = $false; $version = ''; $lines = 50
-    Assert-QP ($action -cin @('menu', 'help', '--help', 'status', 'url', 'start', 'stop', 'restart', 'logs', 'update', 'backup', 'config', 'tls')) '未知维护命令，请输入 qqon help。'
+    $action = $Words[0]; $index = 1; $yes = $false; $version = ''; $lines = 50; $accept = $false
+    Assert-QP ($action -cin @('menu', 'help', '--help', 'status', 'url', 'start', 'stop', 'restart', 'logs', 'update', 'backup', 'config', 'tls', 'privilege')) '未知维护命令，请输入 qqon help。'
     if ($action -ceq 'tls') { Assert-QP ($Words.Count -ge 2 -and $Words[1] -ceq 'renew') '证书续期命令为 qqon tls renew。'; $index = 2 }
     while ($index -lt $Words.Count) {
         $arg = $Words[$index]; $index++
-        if ($arg -ceq '--yes' -and $action -cin @('start', 'stop', 'restart', 'update', 'backup', 'config', 'tls') -and -not $yes) { $yes = $true; continue }
+        if ($arg -ceq '--yes' -and $action -cin @('start', 'stop', 'restart', 'update', 'backup', 'config', 'tls', 'privilege') -and -not $yes) { $yes = $true; continue }
+        if ($arg -ceq '--accept-system-management' -and $action -ceq 'privilege' -and -not $accept) { $accept = $true; continue }
         if ($arg -ceq '--version' -and $action -ceq 'update' -and -not $version -and $index -lt $Words.Count) { $version = $Words[$index]; $index++; [void](ConvertTo-QPVersion $version -Tagged); continue }
         if ($arg -ceq '--lines' -and $action -ceq 'logs' -and $Words.Count -eq 3 -and $index -lt $Words.Count) { $text = $Words[$index]; $index++; Assert-QP ($text -cmatch '\A[1-9][0-9]{0,2}\z' -and [int]$text -le 200) '日志行数必须为 1–200。'; $lines = [int]$text; continue }
         throw '维护参数不匹配或重复，请输入 qqon help。'
     }
     if ($action -ceq '--help') { $action = 'help' }
-    return @{ Action = $action; Yes = $yes; Version = $version; Lines = $lines }
+    return @{ Action = $action; Yes = $yes; Version = $version; Lines = $lines; AcceptSystemManagement = $accept }
 }
 
 function Invoke-QPMaintenance {
@@ -2127,10 +2603,10 @@ function Invoke-QPMaintenance {
     $command = Read-QPMaintenanceCommand $Words
     if ($command.Action -ceq 'help') { Show-QPMaintenanceHelp; return }
     if ($command.Action -ceq 'menu') {
-        [Console]::WriteLine('QQON 维护：1 状态  2 地址  3 日志  4 启动  5 停止  6 重启  7 更新  8 备份  9 访问配置  10 自签续期  0 退出')
+        [Console]::WriteLine('QQON 维护：1 状态  2 地址  3 日志  4 启动  5 停止  6 重启  7 更新  8 备份  9 访问配置  10 自签续期  11 最高权限独立授权  0 退出')
         $selected = Read-QPConsole '请选择：'
         if ($selected -ceq '0') { return }
-        $menu = @{ '1' = @('status'); '2' = @('url'); '3' = @('logs'); '4' = @('start'); '5' = @('stop'); '6' = @('restart'); '7' = @('update'); '8' = @('backup'); '9' = @('config'); '10' = @('tls', 'renew') }
+        $menu = @{ '1' = @('status'); '2' = @('url'); '3' = @('logs'); '4' = @('start'); '5' = @('stop'); '6' = @('restart'); '7' = @('update'); '8' = @('backup'); '9' = @('config'); '10' = @('tls', 'renew'); '11' = @('privilege') }
         Assert-QP ($menu.ContainsKey($selected)) '菜单选择无效。'
         Invoke-QPMaintenance $menu[$selected]; return
     }
@@ -2142,9 +2618,14 @@ function Invoke-QPMaintenance {
         return
     }
     $descriptions = @{ start = '启动服务'; stop = '停止服务'; restart = '重启服务'; update = '更新应用或恢复中断事务'; backup = '停服备份（包含账户及 TLS 私钥）'; config = '修改访问配置'; tls = '生成全新自签证书并切换配置' }
-    Confirm-QPChange $descriptions[$command.Action] $command.Yes
+    $consent = $null
+    if ($command.Action -ceq 'privilege') {
+        $consent = Confirm-QPSystemManagement $command.AcceptSystemManagement $command.Yes
+        if ($null -eq $consent) { [Console]::WriteLine('未取得专门同意，未变更服务身份。'); return }
+    } else { Confirm-QPChange $descriptions[$command.Action] $command.Yes }
     $mutex = Enter-QPLock
     try {
+        if ([IO.File]::Exists((Get-QPPrivilegeJournalPath $paths))) { Resume-QPPrivilege $paths; return }
         if ([IO.File]::Exists($paths.Journal)) { Resume-QPTransaction $paths; return }
         Assert-QPLayout $paths
         $config = Read-QPConfig $paths
@@ -2158,6 +2639,7 @@ function Invoke-QPMaintenance {
             'backup' { Invoke-QPBackup $paths $config }
             'config' { Invoke-QPConfigure $paths $config -Yes:$command.Yes }
             'tls' { Invoke-QPConfigure $paths $config -Renew -Yes:$command.Yes }
+            'privilege' { Invoke-QPPrivilege $paths $config $consent }
         }
         if ($command.Action -cin @('start', 'stop', 'restart')) { [Console]::WriteLine('服务操作完成：' + $descriptions[$command.Action]) }
     } finally { Exit-QPLock $mutex }
@@ -2167,12 +2649,15 @@ function Invoke-QPInstaller {
     param([hashtable]$Options, [string]$Source)
     if ($Options['Maintenance']) {
         Assert-QP (-not $Options['Action'] -and -not $Options['PortSpecified'] -and -not $Options['OriginSpecified']) '维护入口不能混用安装配置参数。'
-        $words = @(([string]$Options['Maintenance']).Split([char]' ', [StringSplitOptions]::RemoveEmptyEntries)) + @($Options['MaintenanceArguments'])
+        $words = @(([string]$Options['Maintenance']).Split([char]' ', [StringSplitOptions]::RemoveEmptyEntries))
+        if ($null -ne $Options['MaintenanceArguments']) { $words += @($Options['MaintenanceArguments']) }
+        if ($Options['AcceptSystemManagement']) { Assert-QP ($words[0] -ceq 'privilege') '-AcceptSystemManagement 只适用于独立 privilege 授权或新安装。[QP_PRIVILEGE]'; $words += '--accept-system-management' }
+        if ($Options['Yes']) { $words += '--yes' }
         Invoke-QPMaintenance $words; return
     }
     $action = [string]$Options['Action']
     if (-not $action) {
-        [Console]::WriteLine('QQON-Panel：1 安装  2 更新/恢复  3 状态（只读）  4 迁移官方 v0.5 管理器  0 退出')
+        [Console]::WriteLine('QQON-Panel：1 安装  2 更新/恢复  3 状态（只读）  4 迁移官方 v0.5/v0.6 管理器  0 退出')
         switch ((Read-QPConsole '请选择：').Trim()) {
             '1' { $action = 'Install'; Read-QPAccessOptions $Options }
             '2' { $action = 'Update' }; '3' { $action = 'Status' }
@@ -2180,6 +2665,7 @@ function Invoke-QPInstaller {
         }
     }
     Assert-QP ($action -cin @('Install', 'Update', 'Status', 'Migrate')) '安装动作只支持 Install、Update、Status、Migrate。'
+    Assert-QP (-not $Options['AcceptSystemManagement'] -or $action -ceq 'Install') '更新或管理器迁移不能携带最高权限同意；请使用独立 -Maintenance privilege。[QP_PRIVILEGE]'
     if ($action -ceq 'Status') {
         Assert-QP (-not $Options['PortSpecified'] -and -not $Options['OriginSpecified']) '只读状态不接受修改配置参数。'
         Assert-QPNativeHost; Show-QPStatus (Get-QPPaths); return
@@ -2195,10 +2681,11 @@ function Invoke-QPInstaller {
     [Console]::WriteLine('仅管理固定 QQONPanel 服务、私有程序和数据目录；不重置账户，不改防火墙、全局执行策略或系统根证书。')
     if ($action -ceq 'Migrate') {
         Assert-QP (-not $Options['Yes'] -or $Options['MigrateLegacy']) '自动迁移必须同时明确指定 -Yes -MigrateLegacy，不与普通更新混用。'
-        Confirm-QPChange '单独迁移已知官方 v0.5 管理器：先独立私有备份，保持旧应用及原访问方式' ([bool]$Options['MigrateLegacy'])
+        Confirm-QPChange '单独迁移已知官方 v0.5/v0.6 管理器：先独立私有备份，保持旧应用及原访问方式' ([bool]$Options['MigrateLegacy'])
     } else { Confirm-QPChange $(if ($action -ceq 'Install') { '安装并启用以上配置' } else { '更新应用或恢复中断事务' }) ([bool]$Options['Yes']) }
-    $pathConsent = $false
+    $pathConsent = $false; $systemConsent = $null
     if ($action -ceq 'Install') {
+        $systemConsent = Confirm-QPSystemManagement ([bool]$Options['AcceptSystemManagement']) ([bool]$Options['Yes'])
         [Console]::WriteLine('可选：仅把固定 ProgramFiles\QQON-Panel 追加到系统 PATH；不改已有条目，当前父终端不更新。不加入时使用绝对路径 qqon.cmd。')
         $pathConsent = [bool]$Options['AddToPath']
         if (-not $Options['Yes'] -and -not $pathConsent) { $pathConsent = ((Read-QPConsole '是否追加系统 PATH？输入“确认”同意，回车跳过：') -ceq '确认') }
@@ -2207,7 +2694,7 @@ function Invoke-QPInstaller {
     try {
         if ($action -ceq 'Install') {
             $accessOptions = @{ Mode = $Options['AccessMode']; Host = [string]$Options['PublicHost']; Certificate = [string]$Options['Certificate']; PrivateKey = [string]$Options['PrivateKey'] }
-            Install-QPPanel $paths ([int]$Options['Port']) ([string]$Options['Origin']) ([string]$Options['Version']) $Source $accessOptions
+            Install-QPPanel $paths ([int]$Options['Port']) ([string]$Options['Origin']) ([string]$Options['Version']) $Source $accessOptions $systemConsent
             if ($pathConsent) { Add-QPSystemPath $paths } else { [Console]::WriteLine('未修改系统 PATH。请使用：' + [IO.Path]::Combine($paths.Code, 'qqon.cmd')) }
         } elseif ($action -ceq 'Migrate') { Invoke-QPMigration $paths ([string]$Options['Version']) $Source }
         else { Update-QPPanel $paths ([string]$Options['Version']) }
@@ -2217,7 +2704,7 @@ function Invoke-QPInstaller {
 # Dot-source loads definitions only. Tests mock functions, never production path/env flags.
 if ($MyInvocation.InvocationName -ne '.') {
     $ErrorActionPreference = 'Stop'
-    $options = @{ Action = $Action; Port = $Port; Origin = $Origin; Version = $Version; Yes = [bool]$Yes; AccessMode = $AccessMode; PublicHost = $PublicHost; Certificate = $Certificate; PrivateKey = $PrivateKey; AddToPath = [bool]$AddToPath; MigrateLegacy = [bool]$MigrateLegacy; Maintenance = $Maintenance; MaintenanceArguments = $MaintenanceArguments; PortSpecified = $PSBoundParameters.ContainsKey('Port'); OriginSpecified = $PSBoundParameters.ContainsKey('Origin') }
+    $options = @{ Action = $Action; Port = $Port; Origin = $Origin; Version = $Version; Yes = [bool]$Yes; AcceptSystemManagement = [bool]$AcceptSystemManagement; AccessMode = $AccessMode; PublicHost = $PublicHost; Certificate = $Certificate; PrivateKey = $PrivateKey; AddToPath = [bool]$AddToPath; MigrateLegacy = [bool]$MigrateLegacy; Maintenance = $Maintenance; MaintenanceArguments = $MaintenanceArguments; PortSpecified = $PSBoundParameters.ContainsKey('Port'); OriginSpecified = $PSBoundParameters.ContainsKey('Origin') }
     try { Invoke-QPInstaller $options $PSCommandPath }
     catch { [Console]::Error.WriteLine('QQON-Panel 安装或维护未完成：' + (Get-QPFailureText $_.Exception.Message)); exit 1 }
 }
