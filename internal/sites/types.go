@@ -249,7 +249,7 @@ func (s *Service) validateUpstream(raw string) (string, error) {
 	}
 	// No DNS resolution or probing of user-supplied upstreams takes place here.
 	// Loopback proxying to ordinary application ports is intentional admin power.
-	if overlapsHost(host, s.panelHost) || port == s.options.PanelPort || (localHost(host) && (port == 8080 || port == 8443 || port == 5173 || port == 9090)) {
+	if (overlapsHost(host, s.panelHost) && !localHost(host)) || port == s.options.PanelPort || (localHost(host) && (port == 8080 || port == 8443 || port == 5173 || port == 9090)) {
 		return "", bad
 	}
 	if ip, err := netip.ParseAddr(host); err == nil && (ip.IsUnspecified() || ip.IsMulticast()) {
