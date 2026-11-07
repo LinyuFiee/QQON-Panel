@@ -13,6 +13,7 @@ import http.cookiejar
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import signal
 import socket
@@ -46,6 +47,27 @@ def command(arguments, timeout=60):
     return result.stdout
 
 
+def prepare_empty_packages():
+    # GitHub images ship Nginx/PHP for other projects. This explicitly guarded,
+    # disposable runner removes only those discovered fixture packages, retaining
+    # distribution configuration and never offering removal in the product API.
+    query = subprocess.run(["/usr/bin/dpkg-query", "-W", "-f=${binary:Package}\\t${Status}\\n", "nginx*", "php*-fpm"],
+                           capture_output=True, text=True, encoding="utf-8", timeout=15)
+    assert query.returncode in (0, 1)
+    packages = []
+    for line in query.stdout.splitlines():
+        name, separator, status = line.partition("\t")
+        name = name.split(":", 1)[0]
+        if separator and status == "install ok installed" and re.fullmatch(r"(?:nginx(?:-[a-z0-9-]+)?|php(?:[0-9]+\.[0-9]+)?-fpm)", name):
+            packages.append(name)
+    if packages:
+        result = subprocess.run(["/usr/bin/apt-get", "-y", "-o", "DPkg::Lock::Timeout=30", "remove", "--", *sorted(set(packages))],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                                env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C", "DEBIAN_FRONTEND": "noninteractive"}, timeout=180)
+        assert result.returncode == 0, "Cannot prepare disposable missing-package fixture"
+    return sorted(set(packages))
+
+
 def port():
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
@@ -70,7 +92,7 @@ class Acceptance:
     def start(self):
         self.process = subprocess.Popen([self.binary, "-listen", "127.0.0.1:" + str(self.listen_port),
                                          "-data-dir", str(self.directory)], stdin=subprocess.DEVNULL,
-                                        stdout=self.log, stderr=self.log, cwd="/", start_new_session=True,
+                                        stdout=self.log, stderr=self.log, cwd="/", start_new_session=True, umask=0o077,
                                         env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8", "HOME": "/root"})
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
@@ -293,8 +315,10 @@ def main():
     parser.add_argument("--report", required=True)
     args = parser.parse_args()
     guard()
+    removed = prepare_empty_packages()
     binary = str(Path(args.binary).resolve(strict=True))
     test = Acceptance(binary)
+    test.report["fixtureRemovedPreinstalledPackages"] = removed
     try:
         report = test.run()
         output = Path(args.report)

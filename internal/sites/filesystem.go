@@ -43,10 +43,12 @@ func relativePath(value string, directory bool) (string, error) {
 // platform no-follow handles, not a Clean+prefix pathname containment check.
 func descend(parent *os.Root, name string, create bool, mode os.FileMode, strict bool) (*os.Root, error) {
 	before, err := parent.Lstat(name)
+	created := false
 	if errors.Is(err, os.ErrNotExist) && create {
 		if err = parent.Mkdir(name, mode); err != nil {
 			return nil, err
 		}
+		created = true
 		before, err = parent.Lstat(name)
 	}
 	if err != nil {
@@ -64,6 +66,15 @@ func descend(parent *os.Root, name string, create bool, mode os.FileMode, strict
 	if err1 != nil || err2 != nil || checkInfo(opened, true, strict) != nil || checkInfo(after, true, strict) != nil || !os.SameFile(before, opened) || !os.SameFile(after, opened) {
 		child.Close()
 		return nil, errUnsafe
+	}
+	if created {
+		// The panel service uses umask 0077. Set the requested mode on the pinned
+		// new directory so non-root Nginx/PHP workers can traverse webroots. Never
+		// repair or widen the permissions of a pre-existing administrator directory.
+		if err := child.Chmod(".", mode); err != nil {
+			child.Close()
+			return nil, err
+		}
 	}
 	return child, nil
 }

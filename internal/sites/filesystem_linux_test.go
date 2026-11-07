@@ -13,6 +13,37 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func TestLinuxWebrootModeSurvivesPrivateServiceUmask(t *testing.T) {
+	base, err := os.OpenRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer base.Close()
+	previous := unix.Umask(0077)
+	defer unix.Umask(previous)
+	child, err := descend(base, "new-webroot", true, 0755, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer child.Close()
+	info, err := child.Stat(".")
+	if err != nil || info.Mode().Perm() != 0755 {
+		t.Fatalf("new webroot must be readable/traversable by non-root workers: %v %v", info, err)
+	}
+	if err := base.Mkdir("existing", 0700); err != nil {
+		t.Fatal(err)
+	}
+	existing, err := descend(base, "existing", true, 0755, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer existing.Close()
+	info, _ = existing.Stat(".")
+	if info.Mode().Perm() != 0700 {
+		t.Fatal("pre-existing directory permissions changed")
+	}
+}
+
 func TestLinuxRejectsFIFODeviceAndSymlinkParents(t *testing.T) {
 	s, _, _ := fixture(t)
 	site := createFixtureSite(t, s)
