@@ -181,7 +181,7 @@ func TestSystemctlFixedAllowlistAndBoundedOutput(t *testing.T) {
 	calls := 0
 	view := queryServices(context.Background(), "/fixture/systemctl", func(ctx context.Context, executable string, args []string) ([]byte, error) {
 		calls++
-		if executable != "/fixture/systemctl" || len(args) != 4+len(serviceAllowlist) || strings.Join(args[:4], " ") != "show --no-pager --property=Id,ActiveState --" {
+		if executable != "/fixture/systemctl" || len(args) != 6+len(serviceAllowlist) || strings.Join(args[:4], " ") != "show --no-pager --property=Id,ActiveState,LoadState --" {
 			t.Fatalf("unexpected command: %s %q", executable, args)
 		}
 		deadline, ok := ctx.Deadline()
@@ -192,6 +192,9 @@ func TestSystemctlFixedAllowlistAndBoundedOutput(t *testing.T) {
 			if args[4+i] != name+".service" {
 				t.Fatal("non-allowlisted service")
 			}
+		}
+		if args[len(args)-2] != "php-fpm.service" || args[len(args)-1] != "php[0-9]*-fpm.service" {
+			t.Fatal("PHP discovery must use fixed unit patterns")
 		}
 		return []byte("Id=nginx.service\nActiveState=active\n\nId=mysql.service\nActiveState=inactive\n\nId=docker.service\nActiveState=failed\n\nId=untrusted.service\nActiveState=active\n"), nil
 	})

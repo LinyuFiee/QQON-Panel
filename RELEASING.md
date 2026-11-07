@@ -4,12 +4,14 @@
 
 <a id="当前发行v050"></a>
 
-## 当前发行：v0.6.0
+## 当前已发布预览版：v0.6.0
 
-- 当前稳定版／`latest` 为 [v0.6.0 正式 Release](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.6.0)，正式 tag 指向 `3cfd1a8fe75eca46fd1d991749c1be39f546638c`。
+- 当前下载／`latest` 为 [v0.6.0 预览版 Release](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.6.0)，已发布 tag 指向 `3cfd1a8fe75eca46fd1d991749c1be39f546638c`。
+- v0.4.0、v0.5.0、v0.6.0 均为预览定位；保留已发布、官方来源和历史验收记录，不等于稳定成熟。三个版本均没有真实业务软件安装或网站创建／部署能力。
+- 历史 v0.4.0／v0.5.0／v0.6.0 Release 标题与说明已由维护者修正为预览定位，已核对 tag／目标、资产 ID／大小／摘要、发布时间和 draft／prerelease 标志未变，`latest` 仍为 v0.6.0；此项仅修正文案，不发布 v0.7。
 - [发布 CI #42349315659](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42349315659) 的 `test-build`、`windows-test`、`publish` 均为 `success`。
 - Windows 新增 maintenance 隔离测试已在本次 CI 通过，不是宿主真实服务安装测试。
-- 面板更新检查显示当前 v0.6.0、`state=up_to_date`、`assetsReady=true`；Windows bootstrap 真实 format3 三平台元数据检查通过，Pages 两个 bootstrap HTTPS 200 且摘要与源码一致。
+- v0.6.0 发布时的只读记录：面板更新检查显示 v0.6.0、`state=up_to_date`、`assetsReady=true`；Windows bootstrap 真实 format3 三平台元数据检查通过，Pages 两个 bootstrap HTTPS 200 且摘要与当时源码一致。这是历史记录，不是 v0.7 或当前线上重新验证结果。
 
 发布与 CI 成功不是逐系统安装或真实 SCM 验收；APT/DNF、SELinux、真实服务权限和物理故障恢复仍需专用测试环境。v0.5.0 的下载复核与只读检查保留为旧版记录，见文档发布页，不移作 v0.6.0 验收证据。
 
@@ -25,10 +27,26 @@
 - `qqon` 包装器由已审核安装器生成，只维护固定面板服务，不新增远程执行来源、任意管理员命令能力或发布资产。
 - 备份先停服取得一致副本，包含账号和证书等敏感数据；配置和换证采用事务。旧 v0.4/v0.5 文件与既有访问不因新版本发布而被覆盖。
 
+## v0.7 预览开发中：授权管理与托管
+
+**尚未发布，测试尚无最终结论。** 不能把开发提交、文档构建或临时环境测试写成已上线／全平台验收；当前下载仍指向 v0.6.0，不创建虚构的 v0.7 Release／附件链接。用户仍需针对确切提交另行确认新发行。
+
+本轮开发范围见 [托管指南](docs/guide/hosting.md)：
+
+- Linux root／Windows LocalSystem 必须独立显式同意：`--accept-system-management`／`-AcceptSystemManagement` 或新维护入口 `qqon privilege`，交互确认短语为 `同意最高权限`。普通 yes、update、root/管理员身份本身均不授权；旧安装不自动提权。固定受保护同意记录与实际服务身份共同决定权限。
+- Linux 白名单软件安装／启停与受管静态、代理、PHP 网站走有界共享任务队列。采用既有可信 APT/DNF 系统源，不自动应用源模板；Windows 不支持这些 Linux 软件与建站功能。
+- 网站文件仅受管根目录，上传 2 MiB／文本编辑 256 KiB；站点配置经 `nginx -t`、reload 和本机标记验证。网站 TLS 仅导入已有证书，不做 ACME；网站停用或删除与文件保留应有清晰提示。
+- 面板自身 RAM 与 Nginx／PHP／数据库／业务 RAM 分开统计，不以空面板指标承诺托管负载占用。
+- 发行清单保持 format3 九资产、用户数据 schema 1；v0.7 开发中的**安装管理记录**为 format3，新增 `privilegeMode`／`privilegeConsent`，与同为 format3 的发行清单不是同一文件。旧 format1/2 记录默认 restricted，普通升级锁定既有权限字段。
+
+Linux 开发接口已确认：`sudo qqon privilege [--accept-system-management] [--yes]`；新装仅本机示例为 `sudo bash install.sh --mode local --yes --accept-system-management`，要求匹配程序不低于 v0.7.0。普通升级／状态／管理器迁移参数不能夹带授权。开发 bootstrap 支持 protocol 5 透传，不使已发布 v0.6 获得最高权限；完整前提见 [托管指南](docs/guide/hosting.md)。
+
+维护者报告 Linux 安装器首轮 **135 项隔离测试通过，其中 10 项 privilege 测试**；这是开发阶段有限结果，不是已完成真实 CI／主机验收。发布前仍需验证安装器与已安装 `qqon`、旧管理器迁移、权限同意与回退、真实 APT/DNF、Nginx/PHP 内容与文件/TLS任务、重启持久性，以及 Windows LocalSystem/ACL 行为。只在隔离临时环境验收，不把开发主机或既有业务服务器作为默认测试目标；不能用旧 v0.6 CI 记录填充本轮结果。
+
 ## 文档与程序分开发布
 
 - `main` 上的文档和一键引导变更触发 `.github/workflows/docs.yml`，只发布静态站点。
-- 程序 Release 由稳定标签 `vMAJOR.MINOR.PATCH` 触发 `.github/workflows/release.yml`。
+- 程序 Release 由 `vMAJOR.MINOR.PATCH` 格式标签触发 `.github/workflows/release.yml`；标签格式或 GitHub `latest` 通道不代表产品成熟度。
 - 文档可以先于 Release 更新，但必须显著标记尚未发布的能力。不要把没有发行文件的一键入口写成已经可安装。
 - 当前 v0.6.0 与旧 v0.5.0 使用 format3、多平台九资产；旧版 v0.4.0 保留 format2、Linux 六资产。不要替换或移动已经公开的旧版本。
 
@@ -41,6 +59,7 @@ python3 -I -m unittest discover -s scripts/tests
 python3 -I -m unittest discover -s tools/tests
 npm --prefix docs ci
 npm --prefix docs run build
+npm --prefix docs run check:links
 ```
 
 Windows 还需原生 PowerShell 隔离测试：
@@ -56,7 +75,7 @@ powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/wind
 
 ## 创建发行
 
-仅在另行确认下一版本、提交与变更说明后，设置实际稳定版本号 `VERSION` 再创建新标签。已发布的 v0.4.0、v0.5.0、v0.6.0 不要重打或移动：
+仅在另行确认下一版本、**确切提交**与变更说明后，设置实际获批的版本号 `VERSION` 再创建新标签。当前没有 v0.7 发布许可；已发布的 v0.4.0、v0.5.0、v0.6.0 不要重打或移动：
 
 ```sh
 git tag -a "$VERSION" -m "QQON-Panel $VERSION"
@@ -83,7 +102,7 @@ Actions 将验证标签身份，运行 Linux 测试／vet／race、Windows Go �
 
 ## 本地打包
 
-需要 Go 1.26+、Python 3，使用实际完整 commit 与构建时间；以下在已设置 `BUILD_TIME` 后用于独立新目录，不覆盖正式 Release：
+需要 Go 1.26+、Python 3，使用实际完整 commit 与构建时间；以下仅用于检出的 v0.6.0 对应提交，在已设置 `BUILD_TIME` 后输出到独立新目录，不覆盖已发布 Release。当前 v0.7 开发源码不得贴上 v0.6.0 版本／提交冒充旧产物：
 
 ```sh
 python3 -I tools/build_release.py \
@@ -116,4 +135,4 @@ v0.4.0 的更新器不认识九资产协议；v0.5.0 的旧管理器不因此自
 - 不运行整机升级，不禁用 TLS 或 SELinux 来“修复”安装。
 - 构建／上传失败只留下未发布草稿或失败任务，不把半成品设为 Latest。
 - 旧 Release 不覆盖，新修复发布新版本；数据迁移须另行设计，不能假称二进制回退恢复任意数据。
-- 文档构建依赖审计信息见 `docs/guide/docs-development.md`，不公开 Vite 开发服务器；Pages 只部署静态产物。
+- 文档维持 VitePress 1.6.4 与既有 lockfile；完整 `npm audit` 当前记录为 **3 项（2 moderate、1 high）**，不能称为漏洞 clean。详见 `docs/guide/docs-development.md`；不公开 Vite 开发服务器，Pages 只部署静态产物。

@@ -1,6 +1,8 @@
 # qqon 维护 {#qqon-维护-v0-6-开发中}
 
-**[v0.6.0 已发布](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.6.0)**，提供中文维护菜单及以下命令。已有 v0.4/v0.5 安装须先显式迁移管理器，不会因文档更新自动获得新入口。
+**[v0.6.0 预览版已发布](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.6.0)**，提供中文维护菜单及以下基础命令。已有 v0.4/v0.5 安装须先显式迁移管理器，不会因文档更新自动获得新入口。
+
+本页命令表针对当前 v0.6.0；`qqon privilege` 属于下方单列的 **v0.7 未发布预览开发接口**，不能在当前下载上假定可用。
 
 ## 中文维护入口
 
@@ -15,7 +17,7 @@
 | `qqon stop` | 停止面板服务 |
 | `qqon restart` | 重启面板服务，会中断访问 |
 | `qqon logs` | 查看有限运行日志；分享前脱敏 |
-| `qqon update` | 校验并更新到兼容的正式程序版本；不自动改为公网访问 |
+| `qqon update` | 校验并更新到兼容的官方已发布程序；不自动改为公网访问，不授权最高系统管理权限 |
 | `qqon backup` | 先停服并确认进程退出，再生成含敏感 data 的一致备份 |
 | `qqon config` | 显式修改访问配置，按事务校验、切换与恢复 |
 | `qqon tls renew` | 更新自签证书，按事务保留旧状态并校验切换 |
@@ -24,11 +26,23 @@
 
 ## 权限与服务身份
 
-安装和维护写操作由 **Linux root** 或 **Windows 管理员终端**执行；这不意味着面板服务以管理员身份常驻。
+安装和维护写操作由 **Linux root** 或 **Windows 管理员终端**执行；这不意味着当前 v0.6.0 面板服务以最高权限常驻。
 
-- Linux 保留固定 `server-panel` 账号与 `server-panel.service`。
-- Windows 保留 `QQONPanel` 服务与 `NT SERVICE\QQONPanel` 虚拟账号。
-- 不因升级或修改访问配置而重建账号、接管不明安装，或放宽私有数据权限。
+- v0.6.0 Linux 保留固定 `server-panel` 账号与 `server-panel.service`。
+- v0.6.0 Windows 保留 `QQONPanel` 服务与 `NT SERVICE\QQONPanel` 虚拟账号。
+- 不因普通升级或修改访问配置而重建账号、接管不明安装，或放宽私有数据权限。
+
+### v0.7 独立权限迁移（未发布） {#system-management}
+
+`qqon privilege` 是本轮预览开发中的**单独授权入口**；Windows 管理器对应 `-Maintenance privilege`。新安装显式参数为 Linux `--accept-system-management`、Windows `-AcceptSystemManagement`。交互同意须在专用提示后输入 `同意最高权限`，不是泛用“y”。未授权维持 restricted。
+
+授权意味着面板进程本身将以 Linux **root** 或 Windows **LocalSystem** 运行，不是只授权一次命令；失陷可能影响整台主机。必须同时有固定受保护同意记录和正确的实际服务身份，手动把 unit/SCM 改成高权限不算授权。普通 `--yes`／`-Yes`、`qqon update`、配置访问和换证都不授权；网页也不能写同意记录。
+
+已有安装须先识别已知官方管理器并独立迁移，保留原访问和账号。Linux 开发顺序为 **迁移 manager → `sudo qqon update` 至不低于 v0.7.0、仍为 restricted → `sudo qqon privilege` 独立授权**；先确认新程序在受限身份下健康。
+
+Linux 已确认语法为 `sudo qqon privilege [--accept-system-management] [--yes]`。不带专用标志时走交互同意；带 `--accept-system-management` 明确表达独立授权。**单独 `--yes` 不授权**；普通 `--upgrade`／`--update`／`--status`／`--migrate-manager` 与授权标志组合均拒绝，`qqon update/status` 也不能夹带授权。
+
+当前没有公开 v0.7 发行可升级，v0.6 只能受限安装。Linux 首轮隔离测试已通过，但真实 CI 与主机回退仍待验证，Windows 调用组合亦待验证。完整新装示例、protocol 5 透传与有限测试记录见 [v0.7 托管开发指南](./hosting#authorization)。
 
 ## 备份与事务
 

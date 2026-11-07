@@ -21,6 +21,11 @@ func PreparePrivateDirectory(path string) error {
 	return inspectPrivatePath(path, true, true)
 }
 
+// CheckPrivateDirectory inspects an existing directory without creating it or changing its ACL.
+func CheckPrivateDirectory(path string) error {
+	return inspectPrivatePath(path, false, true)
+}
+
 // CheckPrivateFile checks the actual NTFS object, not emulated Unix mode bits.
 func CheckPrivateFile(path string) error {
 	return inspectPrivatePath(path, false, false)

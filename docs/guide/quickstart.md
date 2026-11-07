@@ -1,6 +1,8 @@
 # 快速开始
 
-当前稳定版 **[v0.6.0](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.6.0)** 已发布。选择系统，复制一条命令，再按中文提示操作。
+当前已发布预览版 **[v0.6.0](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.6.0)** 可通过下方入口安装。选择系统，复制一条命令，再按中文提示操作。
+
+v0.4.0／v0.5.0／v0.6.0 均不代表稳定成熟，且没有真实业务软件安装与网站创建／部署。**v0.7 预览尚未发布，测试尚无最终结论**；[托管开发指南](./hosting)中的最高权限和建站命令不适用于当前 v0.6 下载。
 
 ## 一键交互安装 {#next-release}
 

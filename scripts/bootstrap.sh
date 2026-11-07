@@ -100,10 +100,12 @@ actual=$(sha256sum "$stage/install.sh"); actual=${actual%% *}
 [[ $actual == "$expected" ]] || fail '安装器摘要不匹配，未执行任何下载代码。'
 { IFS= read -r first; IFS= read -r second; } < "$stage/install.sh"
 [[ $first == '#!/bin/bash' ]] || fail '下载内容不是受支持的官方安装器。'
-if [[ $second == '# QQON-Panel interactive installer protocol: 4' ]]; then
-    printf '%s\n' '已校验 v0.6 安装入口：公网 HTTPS 需确认主机地址，不会查询外部 IP 或修改防火墙。'
+if [[ $second == '# QQON-Panel interactive installer protocol: 5' ]]; then
+    printf '%s\n' '已校验预览安装入口：最高权限需独立同意，普通 --yes 和升级不会自动授权。'
+elif [[ $second == '# QQON-Panel interactive installer protocol: 4' && $actual == 43c30d2985e54873193f27595acb025b992f8da33defe0814b03bcc0ac538c75 ]]; then
+    printf '%s\n' '已校验 v0.6 预览安装入口：公网 HTTPS 需确认主机；旧版没有软件安装和网站部署能力。'
 elif [[ $second == '# QQON-Panel interactive installer protocol: 3' && $actual == 9af6eaf93bbdd5f622bc9bc7b37e4a6f1f218298e7a403ee2d7cfffbd8630936 ]]; then
-    printf '%s\n' '当前官方稳定版为 v0.5：继续运行已验证的旧安装器，仅支持本机访问或已有 HTTPS 代理。' \
+    printf '%s\n' '已验证的 v0.5 预览版：继续运行旧安装器，仅支持本机访问或已有 HTTPS 代理。' \
         '旧版向导可能显示英文，不含 v0.6 公网证书和 qqon 维护功能；可取消后等待新版本。'
 else
     fail '安装器版本或协议不受支持；未执行下载代码。请查看官方版本说明。'

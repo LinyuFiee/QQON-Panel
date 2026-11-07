@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,7 +37,7 @@ import (
 var assets embed.FS
 
 var (
-	version          = "0.6.0"
+	version          = "0.7.0"
 	commit           = "unknown"
 	buildTime        = "unknown"
 	githubRepository = "LinyuFiee/QQON-Panel"
@@ -239,6 +240,20 @@ func run(parent context.Context, ready func()) (runErr error) {
 		return fmt.Errorf("身份验证模块初始化失败：%w", err)
 	}
 	defer authService.Close()
+	panelOrigin, _ := url.Parse(origins[0])
+	panelPort, err := strconv.Atoi(port)
+	if err != nil || panelPort < 1 || panelPort > 65535 {
+		return errors.New("面板监听端口须为 1–65535 的数字")
+	}
+	hosting, err := newHostingServices(absoluteData, panelOrigin.Hostname(), panelPort, authService.Record)
+	if err != nil {
+		return fmt.Errorf("软件与网站管理模块初始化失败：%w", err)
+	}
+	defer func() {
+		if err := hosting.Close(); err != nil {
+			log.Printf("后台任务关闭失败：%v", err)
+		}
+	}()
 	machineService, err := machine.New(machine.Options{FileRoot: *fileRoot, DockerSocket: *dockerSocket, AllowDockerWrites: *allowWrites})
 	if err != nil {
 		return fmt.Errorf("系统适配初始化失败：%w", err)
@@ -265,6 +280,7 @@ func run(parent context.Context, ready func()) (runErr error) {
 	machineService.Register(apiMux)
 	sourceService.Register(apiMux)
 	updateService.Register(apiMux)
+	hosting.Register(apiMux)
 	apiMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		server.Error(w, http.StatusNotFound, "not_found", "接口不存在或当前版本尚未实现。")
 	})
@@ -297,7 +313,9 @@ func run(parent context.Context, ready func()) (runErr error) {
 			_ = httpServer.Close()
 		}
 	}()
-	log.Printf("QQON-Panel %s 已监听 %s；Go 管理内存软限制 %d MiB", version, origins[0], *memoryMiB)
+	log.Printf("QQON-Panel %s 预览版已监听 %s；Go 管理内存软限制 %d MiB", version, origins[0], *memoryMiB)
+	permission := hosting.authority.Status()
+	log.Printf("管理权限：%s；运行身份：%s；%s", permission.Mode, permission.Identity, permission.Reason)
 	if tokenPath := authService.SetupTokenPath(); tokenPath != "" {
 		log.Printf("首次使用需初始化管理员；请在本机读取私有令牌文件：%s", tokenPath)
 	}

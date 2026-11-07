@@ -14,7 +14,9 @@
 
   const pageNames = {
     overview: "概览",
+    apps: "软件",
     websites: "网站",
+    jobs: "任务",
     files: "文件",
     services: "服务",
     sources: "应用与源",
@@ -24,7 +26,12 @@
   };
   const dockerTabs = { containers: "容器", images: "镜像", volumes: "卷", networks: "网络" };
   const actionNames = { start: "启动", stop: "停止", restart: "重启" };
-  const taskNames = { queued: "排队中", running: "执行中", succeeded: "已完成", failed: "失败" };
+  const taskNames = { queued: "排队中", running: "执行中", succeeded: "已完成", failed: "失败", interrupted: "已中断" };
+  const siteTypes = { static: "静态网站", proxy: "反向代理", php: "PHP 网站" };
+  const appIDs = ["nginx", "php-fpm", "mariadb", "redis"];
+  const pendingJob = (job) => ["queued", "running"].includes(job?.status);
+  const validSiteID = (id) => typeof id === "string" && /^[a-f0-9]{32}$/.test(id);
+  const utf8Bytes = (value) => new TextEncoder().encode(value).length;
   const dailySentences = [
     "先记录事实，再判断原因。",
     "把复杂的问题拆成可以验证的小步骤。",
@@ -52,6 +59,7 @@
     recoveryVisible: false,
     pollTimer: null,
     modal: null,
+    jobSelection: "",
     dockerTab: "containers",
     dockerStatus: null,
     accountData: null,
@@ -202,7 +210,11 @@
   function stopRoute() {
     clearTimeout(state.pollTimer);
     state.pollTimer = null;
-    if (state.route) state.route.controller.abort();
+    if (state.route) {
+      state.route.controller.abort();
+      state.route.fileController?.abort();
+      state.route.jobDetailController?.abort();
+    }
     state.route = null;
     closeDialog(true);
   }
@@ -250,7 +262,11 @@
       if (current(context)) {
         main.removeAttribute("aria-busy");
         main.querySelectorAll('[data-action="refresh"]').forEach((button) => { button.disabled = false; });
-        schedulePoll(context);
+        if (context.refreshRequested) {
+          context.refreshRequested = false;
+          if (!document.hidden && !dialog.open) void refreshRoute(context);
+          else { context.interval ||= 5000; schedulePoll(context); }
+        } else schedulePoll(context);
       }
     }
   }
@@ -279,7 +295,9 @@
     state.dockerStatus = null;
     const renderers = {
       overview: renderOverviewPage,
+      apps: renderAppsPage,
       websites: renderWebsitesPage,
+      jobs: renderJobsPage,
       files: renderFilesPage,
       services: renderServicesPage,
       sources: renderSourcesPage,
@@ -314,6 +332,7 @@
     state.sourceRevision = null;
     state.sourceDirty = false;
     state.accountDirty = false;
+    state.jobSelection = "";
     state.files = { path: "", offset: 0, previous: [], query: "", data: null };
     API.clearSession();
     app.hidden = true;
@@ -418,13 +437,14 @@
   // Overview: only the server's finite sample history is plotted; null remains unavailable.
   function renderOverviewPage(context) {
     setHTML(main, `${pageHeading("每日一言", dailySentence(), refreshButton())}<div id="route-message"></div>
-      <div id="overview-system">${loading("正在读取系统采样…")}</div>
+      <div id="management-status"></div><div id="overview-system">${loading("正在读取系统采样…")}</div>
       <section class="panel section-card"><h2>功能可用性</h2><div id="overview-capabilities">${loading()}</div></section>`);
     context.interval = 5000;
     context.refresh = async (signal, automatic) => {
       document.getElementById("page-description").textContent = dailySentence();
       const requests = [renderSection(context, "overview-system", () => API.system(signal), renderSystem)];
       if (!automatic || !context.capabilitiesLoaded) {
+        requests.push(loadManagement(context, signal));
         requests.push(renderSection(context, "overview-capabilities", () => API.capabilities(signal), (data) => {
           const content = renderCapabilities(data);
           context.capabilitiesLoaded = true;
@@ -507,9 +527,540 @@
     return `<div class="capability-grid">${items.map(([name, available, reason]) => `<div><strong>${h(name)}</strong>${badge(available === true ? "已提供" : available === false ? "不可用" : "未知", available === true ? "success" : "neutral")}${reason ? `<p>${h(reason)}</p>` : ""}</div>`).join("")}</div>`;
   }
 
-  function renderWebsitesPage() {
-    setHTML(main, `${pageHeading("网站")}<section class="panel section-card"><h2>未配置</h2>
-      <p class="body-copy">当前版本没有网站创建、部署、反向代理或证书管理接口。这里不会显示示例网站，也不会修改服务器配置。</p></section>`);
+  // Hosting privileges are reported by the server, never granted by a web control.
+  function renderManagement(data) {
+    if (!["restricted", "system"].includes(data?.mode) || typeof data.authorized !== "boolean" || typeof data.identity !== "string" || typeof data.platform !== "string") throw invalid("最高权限状态响应不符合契约；管理操作保持禁用。");
+    if (data.authorized && (data.mode !== "system" || !["root", "LocalSystem"].includes(data.identity))) throw invalid("最高权限状态不一致；管理操作保持禁用。");
+    return `<section class="notice ${data.authorized ? "success" : "warning"} management-notice">${icon("shield")}<div><strong>${data.authorized ? "系统最高权限已授权" : "未获得系统最高权限授权"}</strong><small>模式 ${h(data.mode)} · 身份 ${h(text(data.identity))} · 平台 ${h(text(data.platform))}${data.acceptedAt ? ` · 授权记录 ${h(formatDate(data.acceptedAt))}` : ""}</small>
+      <span>${h(data.authorized ? "管理任务以系统最高权限执行，可修改软件、服务和站点配置。每项变更都需要单独确认。" : text(data.reason, "当前仅允许受限操作。实际身份与主机本地授权记录必须同时有效；root 身份本身不代表已同意。"))}</span>
+      ${data.authorized && data.reason ? `<small>${h(data.reason)}</small>` : ""}<small>网页不能授予最高权限；需要主机管理员通过本地安装器明确授权。</small></div></section>
+      ${data.platform.toLowerCase() === "windows" ? notice("Windows 暂不支持软件安装和网站管理（unsupported）。LocalSystem 授权不等于这些 Linux 功能可用。", "warning") : ""}`;
+  }
+
+  async function loadManagement(context, signal) {
+    context.management = null;
+    try {
+      const data = await API.management(signal);
+      if (!current(context) || signal.aborted) return;
+      const markup = renderManagement(data);
+      context.management = data;
+      setHTML("management-status", markup);
+    } catch (error) {
+      if (!aborted(error) && current(context)) setHTML("management-status", errorMarkup(error));
+    }
+  }
+
+  function hostingWritable(context, data) {
+    return current(context) && context.management?.authorized === true && context.management.platform === "linux" && data?.available === true;
+  }
+
+  function requireJob(job) {
+    if (!job || typeof job.id !== "string" || !job.id || job.id.length > 128 || !Object.hasOwn(taskNames, job.status) || !Array.isArray(job.logs)) throw invalid("后端未返回有效任务。请先读取任务列表确认结果，不要直接重复提交。");
+    return job;
+  }
+
+  function jobBadge(job) {
+    return badge(taskNames[job.status], job.status === "succeeded" ? "success" : ["failed", "interrupted"].includes(job.status) ? "error" : "warning");
+  }
+
+  function jobProgress(job) {
+    const valid = number(job.progress) && job.progress >= 0 && job.progress <= 100;
+    return `<div class="job-progress"><progress max="100" ${valid ? `value="${job.progress}"` : ""} aria-label="${h(text(job.stage, "任务进度"))}"></progress><span>${valid ? `${h(job.progress)}%` : "未知"}</span></div><small>${h(text(job.stage, "等待后端报告阶段"))}</small>`;
+  }
+
+  function renderJobRows(jobs, compact = false) {
+    return table(["任务 / 目标", "状态", "真实进度", "结果 / 时间", "详情"], jobs.map((job) => `<tr><td class="wrap-cell"><strong>${h(text(job.action))}</strong><small class="mono">${h(text(job.target))}</small><small class="mono">${h(job.id)}</small></td>
+      <td>${jobBadge(job)}</td><td>${jobProgress(job)}</td><td class="wrap-cell">${h(text(job.error, text(job.message, pendingJob(job) ? "尚未完成" : "后端未提供结果说明")))}<small>${h(formatDate(job.finishedAt || job.createdAt))}</small></td>
+      <td><button class="button button-small" type="button" data-action="show-job" data-job-id="${h(job.id)}" data-focus-key="job-${h(job.id)}">${compact ? "查看" : "进度与日志"}</button></td></tr>`).join(""), compact ? "近期管理任务" : "软件与网站任务", "没有保留的任务。不会显示模拟进度。");
+  }
+
+  function renderJobSummary(jobs) {
+    const selected = [...jobs.filter(pendingJob), ...jobs.filter((job) => !pendingJob(job))].slice(0, 6);
+    return `<section class="panel hosting-task-panel"><div class="section-toolbar"><div><h2>近期管理任务</h2><p class="panel-subtitle">受理不等于成功；完成后重新读取当前页面。</p></div><a class="text-link" href="#jobs">全部任务与日志</a></div>${renderJobRows(selected, true)}</section>`;
+  }
+
+  async function loadHostingJobs(context, signal, full = false) {
+    try {
+      const data = await API.jobs(signal);
+      if (!current(context) || signal.aborted) return false;
+      const jobs = requireList(data, "jobs", 32).map(requireJob);
+      const completed = jobs.some((job) => pendingJob(context.jobStates?.get(job.id)) && !pendingJob(job));
+      context.jobs = jobs;
+      context.jobStates = new Map(jobs.map((job) => [job.id, { status: job.status }]));
+      context.interval = jobs.some(pendingJob) ? 5000 : 0;
+      setHTML(full ? "jobs-content" : "hosting-jobs", full ? renderJobRows(jobs) : renderJobSummary(jobs));
+      return completed;
+    } catch (error) {
+      if (!aborted(error) && current(context)) setHTML(full ? "jobs-content" : "hosting-jobs", errorMarkup(error));
+      return false;
+    }
+  }
+
+  async function acceptedHostingJob(context, result) {
+    const job = requireJob(result?.job);
+    if (!current(context)) return;
+    context.jobStates ??= new Map();
+    context.jobStates.set(job.id, { status: job.status });
+    context.reloadResources = true;
+    context.interval = pendingJob(job) ? 5000 : context.interval;
+    closeDialog(true);
+    setHTML("route-message", notice(`任务已受理：${job.id}（${taskNames[job.status]}）。提交请求不代表执行成功，请查看最终状态和日志。`));
+    showToast("后台任务已受理，请等待实际结果；关闭页面不会取消已受理的任务。");
+    if (context.refreshing) context.refreshRequested = true;
+    else await refreshRoute(context);
+  }
+
+  function renderAppsPage(context) {
+    setHTML(main, `${pageHeading("软件", "管理主机上的 Nginx、PHP-FPM、MariaDB 和 Redis，不是安装面板自身。", refreshButton())}<div id="route-message"></div><div id="management-status">${loading("正在读取最高权限状态…")}</div>
+      <div id="apps-content">${loading("正在读取已安装的软件…")}</div><div id="hosting-jobs"></div>`);
+    context.refresh = async (signal, automatic) => {
+      const completed = await loadHostingJobs(context, signal);
+      if (!current(context) || signal.aborted) return;
+      if (!automatic || completed || context.reloadResources) {
+        context.reloadResources = false;
+        await loadApps(context, signal);
+      }
+    };
+  }
+
+  async function loadApps(context, signal) {
+    try {
+      const [, data] = await Promise.all([loadManagement(context, signal), API.apps(signal)]);
+      if (!current(context) || signal.aborted) return;
+      if (typeof data.available !== "boolean" || !["apt", "dnf", ""].includes(data.manager) || !Array.isArray(data.phpRuntimes)) throw invalid();
+      const items = requireList(data, "items", 4);
+      if (items.some((item) => !appIDs.includes(item?.id) || typeof item.installed !== "boolean")) throw invalid();
+      context.apps = { ...data, items };
+      const writable = hostingWritable(context, data);
+      setHTML("apps-content", `${!data.available ? notice(text(data.reason, "软件管理不可用。"), "warning") : data.reason ? notice(data.reason) : ""}
+        <section class="panel section-card hosting-intro"><h2>系统现有可信软件源</h2><p class="body-copy">${h(data.manager ? `包管理器：${data.manager.toUpperCase()}。` : "包管理器未就绪。")}安装只使用主机已经配置的可信源，不切换仓库、不应用“应用与源”中的模板，不升级整个系统、不删除已有应用数据。安装、启动或重启可能占用端口和内存。安装完成不等于服务已运行，实际状态以软件卡片为准。</p><a class="text-link" href="#sources">查看源配置模板（不会应用）</a></section>
+        <div class="apps-grid">${items.map((item) => `<article class="panel app-card"><div class="app-card-heading"><span class="app-symbol">${icon(item.id === "nginx" ? "globe" : item.id === "php-fpm" ? "file" : "server")}</span><div><h2>${h(text(item.name, item.id))}</h2><span class="mono muted">${h(item.id)}</span></div>${item.installed ? badge("已安装", "success") : badge("未安装")}</div>
+          <p class="body-copy">${h(text(item.description, "由系统包管理器维护的软件服务。"))}</p>${facts([["版本", text(item.version, item.installed ? "后端未提供版本" : "未安装")]])}<div class="app-service-state">${serviceBadge(item.state)}${item.installed && item.state !== "active" ? `<p class="panel-subtitle">${h(item.state === "inactive" ? "已安装，服务尚未启动；需要使用时请点“启动”。" : "已安装，但服务未报告运行中。请检查状态与任务日志，确认后再启动。")}</p>` : ""}</div>
+          <div class="form-actions"><button class="button button-primary button-small" type="button" data-action="app-operation" data-app-id="${h(item.id)}" data-operation="install" ${writable && !item.installed ? "" : "disabled"}>${item.installed ? "已安装" : "安装"}</button>
+          ${Object.entries(actionNames).map(([action, label]) => `<button class="button button-small ${action === "stop" ? "button-danger" : ""}" type="button" data-action="app-operation" data-app-id="${h(item.id)}" data-operation="${action}" ${writable && item.installed ? "" : "disabled"}>${label}</button>`).join("")}</div></article>`).join("") || empty("后端没有返回可管理的软件。")}</div>
+        <section class="panel section-card"><h2>已检测到的 PHP-FPM 运行时</h2><p class="panel-subtitle">网站只能选择主机实际提供的运行时；Nginx / PHP 等服务的内存属于主机应用，不是面板进程内存。</p>${data.phpRuntimes.length ? facts(list(data.phpRuntimes, 32).map((runtime) => [text(runtime.id), `${text(runtime.version)} · ${text(runtime.unit)} · ${text(runtime.socket, "Socket 未提供")}`])) : empty("没有可用的 PHP-FPM 运行时。安装后请检查任务结果并重新读取。")}</section>`);
+    } catch (error) {
+      if (!aborted(error) && current(context)) {
+        context.apps = null;
+        setHTML("apps-content", errorMarkup(error));
+      }
+    }
+  }
+
+  function confirmAppAction(id, action) {
+    const context = state.route;
+    const item = context?.apps?.items.find((entry) => entry.id === id);
+    if (!item || !hostingWritable(context, context.apps) || !["install", "start", "stop", "restart"].includes(action) || (action === "install" ? item.installed : !item.installed)) return showToast("当前不可执行该软件操作，请重新读取权限和软件状态。");
+    const label = action === "install" ? "安装" : actionNames[action];
+    const effect = action === "install" ? "将使用系统现有可信源安装软件及所需依赖，可能启动服务、占用端口和内存；不会应用面板中的软件源模板。" : action === "start" ? "将启动此软件服务，可能开放其已有配置中的监听端口。" : "将中断此软件提供的服务，可能影响依赖它的网站或数据库连接。";
+    openConfirm(`${label}${text(item.name, id)}`, `<p>软件：<strong>${h(text(item.name, id))}</strong> <span class="mono">${h(id)}</span></p>${notice(`${effect}以系统最高权限执行，不会自动重试。`, "warning")}`, `确认${label}`, async (signal) => {
+      await acceptedHostingJob(context, await API.appAction(id, action, signal));
+    });
+  }
+
+  function renderJobsPage(context) {
+    context.jobId = state.jobSelection || "";
+    setHTML(main, `${pageHeading("任务", "软件与网站共享有界任务队列；最多保留 32 项。进度、阶段和日志均来自后端。", refreshButton())}<div id="route-message"></div><div id="management-status"></div>
+      <section class="panel section-card hosting-intro"><p class="body-copy">仅本页可见且存在排队 / 执行中任务时每 5 秒读取。切页、隐藏或打开对话框会暂停；关闭页面不等于取消服务器任务。失败或进程重启后的中断任务不会自动重试。</p><div class="form-actions"><a class="text-link" href="#apps">软件实际状态</a><a class="text-link" href="#websites">网站实际状态</a></div></section>
+      <section class="panel hosting-task-panel" id="jobs-content">${loading()}</section><div id="job-detail"></div>`);
+    context.refresh = async (signal, automatic) => {
+      const requests = [loadHostingJobs(context, signal, true)];
+      if (!automatic) requests.push(loadManagement(context, signal));
+      await Promise.all(requests);
+      if (current(context) && !signal.aborted && context.jobId) await loadJobDetail(context, signal);
+    };
+  }
+
+  async function loadJobDetail(context, signal) {
+    const id = context.jobId;
+    const sequence = context.jobDetailSequence = (context.jobDetailSequence || 0) + 1;
+    context.jobDetailController?.abort();
+    const controller = new AbortController();
+    context.jobDetailController = controller;
+    const abort = () => controller.abort();
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener("abort", abort, { once: true });
+    try {
+      const data = await API.job(id, controller.signal);
+      if (!current(context) || controller.signal.aborted || context.jobDetailSequence !== sequence) return;
+      const job = requireJob(data.job);
+      if (job.id !== id) throw invalid();
+      // Only one task's bounded tail is rendered, not 32 expanded log streams.
+      const lines = job.logs.slice(-2048).map((line) => typeof line === "string" ? line : "[无效日志行]");
+      const joined = lines.join("\n");
+      const logs = joined.slice(-65536);
+      setHTML("job-detail", `<section class="panel section-card job-detail"><div class="section-toolbar"><h2>任务详情</h2><button class="button button-small" type="button" data-action="close-job-detail">收起</button></div>${facts([["任务", job.id], ["操作 / 目标", `${text(job.action)} / ${text(job.target)}`], ["创建", formatDate(job.createdAt)], ["开始", formatDate(job.startedAt)], ["结束", formatDate(job.finishedAt)]])}<div class="job-detail-state">${jobBadge(job)}${jobProgress(job)}</div>
+        ${job.message ? notice(job.message) : ""}${job.error ? notice(job.error, "error") : ""}${job.status === "interrupted" ? notice("任务已中断，可能有部分操作已经执行。请先检查实际状态，不要盲目重复提交。", "warning") : ""}
+        <h3>有界日志尾部</h3><p class="panel-subtitle">仅显示后端保留日志，最多 2,048 行 / 64 Ki 字符；不执行 HTML 或终端控制代码。</p>${joined.length > logs.length || job.logs.length > lines.length ? notice("显示内容已截断，仅保留日志尾部。", "warning") : ""}${logs ? `<pre class="code-preview log-preview">${h(logs)}</pre>` : empty("后端尚未报告日志。")}</section>`);
+    } catch (error) {
+      if (!aborted(error) && current(context) && context.jobDetailSequence === sequence) setHTML("job-detail", errorMarkup(error));
+    } finally {
+      signal.removeEventListener("abort", abort);
+      if (context.jobDetailController === controller) context.jobDetailController = null;
+    }
+  }
+
+  function showJob(id) {
+    if (typeof id !== "string" || !id || id.length > 128) return;
+    state.jobSelection = id;
+    if (state.page !== "jobs") { location.hash = "#jobs"; return; }
+    const context = state.route;
+    context.jobId = id;
+    setHTML("job-detail", loading("正在读取任务详情…"));
+    void loadJobDetail(context, context.signal);
+  }
+
+  function validateSite(site) {
+    if (!validSiteID(site?.id) || typeof site.name !== "string" || !Array.isArray(site.domains) || !site.domains.length || site.domains.length > 10 || site.domains.some((domain) => typeof domain !== "string") || !Object.hasOwn(siteTypes, site.type) || typeof site.enabled !== "boolean" || typeof site.tlsEnabled !== "boolean" || !Number.isInteger(site.port) || !Number.isSafeInteger(site.revision) || site.revision < 1) throw invalid("网站响应缺少有效标识、类型或配置版本。请重新读取。");
+    return site;
+  }
+
+  function siteURL(site) {
+    try {
+      const url = new URL(site.url);
+      if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash || url.origin === location.origin) return "";
+      return url.href;
+    } catch { return ""; }
+  }
+
+  function siteFields(site) {
+    return { name: site.name, domains: site.domains, type: site.type, port: site.port, enabled: site.enabled, ...(site.type === "proxy" ? { upstream: site.upstream } : {}), ...(site.type === "php" ? { phpRuntime: site.phpRuntime } : {}) };
+  }
+
+  function renderWebsitesPage(context) {
+    setHTML(main, `${pageHeading("网站", "管理真实 Nginx 静态站点、反向代理和 PHP 网站。每次配置变更先校验、再重载；失败请查看任务诊断。", `${refreshButton()}<button class="button button-primary" type="button" data-action="create-site" id="create-site" disabled>创建网站</button>`)}<div id="route-message"></div><div id="management-status">${loading("正在读取最高权限状态…")}</div>
+      <div id="sites-content">${loading("正在读取受管网站…")}</div><div id="hosting-jobs"></div><div id="site-files"></div>`);
+    context.refresh = async (signal, automatic) => {
+      const completed = await loadHostingJobs(context, signal);
+      if (!current(context) || signal.aborted) return;
+      if (!automatic || completed || context.reloadResources) {
+        context.reloadResources = false;
+        await loadSites(context, signal);
+        if (current(context) && !signal.aborted && context.siteFiles) await loadSiteFiles(context, signal);
+      }
+    };
+  }
+
+  async function loadSites(context, signal) {
+    const create = document.getElementById("create-site");
+    if (create) create.disabled = true;
+    try {
+      const [, data] = await Promise.all([loadManagement(context, signal), API.sites(signal)]);
+      if (!current(context) || signal.aborted) return;
+      if (typeof data.available !== "boolean" || !Array.isArray(data.phpRuntimes) || !number(data.uploadLimitBytes) || data.uploadLimitBytes <= 0 || !number(data.editLimitBytes) || data.editLimitBytes <= 0) throw invalid();
+      const sites = requireList(data, "sites", 128).map(validateSite);
+      context.sites = { ...data, sites, uploadLimitBytes: Math.min(data.uploadLimitBytes, 2097152), editLimitBytes: Math.min(data.editLimitBytes, 262144) };
+      const writable = hostingWritable(context, data);
+      if (create) create.disabled = !writable || sites.length >= 128;
+      setHTML("sites-content", `${!data.available ? notice(text(data.reason, "网站管理不可用，请先检查权限与 Nginx。"), "warning") : data.reason ? notice(data.reason) : ""}
+        <section class="panel section-card hosting-intro"><div class="section-toolbar"><div><h2>受管网站 <span class="muted">${sites.length} / 128</span></h2><p class="panel-subtitle">仅管理面板创建的配置；不会接管系统已有的未知 Nginx 配置。</p></div><a class="text-link" href="#apps">安装 / 检查 Nginx 和 PHP</a></div><p class="body-copy">首次使用请到软件页安装并启动 Nginx；PHP 网站还需启动实际 PHP-FPM 运行时。已安装但未运行不是安装失败。访问地址是配置值，不代表 DNS、证书信任或公网可达性已经验证。删除只移除受管配置，始终保留网站目录与文件。</p></section>
+        <section class="panel sites-panel">${table(["网站 / 域名", "类型 / 端口", "配置状态", "操作"], sites.map((site) => {
+          const url = siteURL(site);
+          return `<tr><td class="wrap-cell"><button class="text-link" type="button" data-action="site-details" data-site-id="${h(site.id)}"><strong>${h(site.name)}</strong></button><small class="mono">${h(site.domains.join("\n"))}</small>${url ? `<a class="text-link" href="${h(url)}" target="_blank" rel="noopener noreferrer">访问配置地址 ${icon("chevron")}</a>` : ""}</td>
+            <td>${h(siteTypes[site.type])}<small class="mono">端口 ${h(site.port)}${site.phpRuntime ? ` · ${h(site.phpRuntime)}` : ""}</small>${site.upstream ? `<small class="mono wrap-cell">${h(site.upstream)}</small>` : ""}</td>
+            <td>${badge(site.enabled ? "配置启用" : "已停用", site.enabled ? "success" : "neutral")} ${badge(site.tlsEnabled ? "TLS 已配置" : "未配置 TLS", site.tlsEnabled ? "success" : "neutral")}<small>${h(text(site.configStatus, "配置状态未提供"))}</small></td>
+            <td><div class="row-actions site-actions"><button class="button button-small" type="button" data-action="edit-site" data-site-id="${h(site.id)}" ${writable ? "" : "disabled"}>编辑</button><button class="button button-small" type="button" data-action="toggle-site" data-site-id="${h(site.id)}" ${writable ? "" : "disabled"}>${site.enabled ? "停用" : "启用"}</button><button class="button button-small" type="button" data-action="site-files" data-site-id="${h(site.id)}" ${data.available ? "" : "disabled"}>文件</button><button class="button button-small" type="button" data-action="site-tls" data-site-id="${h(site.id)}" ${writable ? "" : "disabled"}>导入 TLS</button><button class="button button-small button-danger" type="button" data-action="delete-site" data-site-id="${h(site.id)}" ${writable ? "" : "disabled"}>删除配置</button></div></td></tr>`;
+        }).join(""), "受管网站列表", "没有受管网站。具备权限并安装 Nginx 后，可创建第一个网站。")}</section>`);
+    } catch (error) {
+      if (!aborted(error) && current(context)) {
+        context.sites = null;
+        setHTML("sites-content", errorMarkup(error));
+      }
+    }
+  }
+
+  function findSite(context, id, write = false) {
+    if (!current(context) || !validSiteID(id) || !context.sites || (write && !hostingWritable(context, context.sites))) throw new API.Error("网站状态或管理权限不可用，请重新读取。", "site_unavailable");
+    const site = context.sites.sites.find((item) => item.id === id);
+    if (!site) throw new API.Error("该网站不在当前列表中，请重新读取。", "site_missing");
+    return site;
+  }
+
+  function openSiteDetails(id) {
+    findSite(state.route, id);
+    const modal = openDialog("网站详情", loading());
+    modal.load = async (signal) => {
+      const site = validateSite((await API.site(id, signal)).site);
+      if (site.id !== id) throw invalid();
+      return `${facts([["名称", site.name], ["稳定标识", site.id], ["域名", site.domains.join(", ")], ["类型", siteTypes[site.type]], ["端口", site.port], ["启用", site.enabled ? "是" : "否"], ["TLS", site.tlsEnabled ? "已配置" : "未配置"], ["配置状态", text(site.configStatus)], ["配置地址（未验证公网）", text(site.url)], ["受管根目录", text(site.root)], ["上游", text(site.upstream, "不适用")], ["PHP 运行时", text(site.phpRuntime, "不适用")], ["版本", site.revision], ["创建", formatDate(site.createdAt)], ["更新", formatDate(site.updatedAt)]])}${notice("删除只移除受管配置，文件始终保留。TLS 私钥不会通过查询接口返回。")}`;
+    };
+    void loadDialog(modal);
+  }
+
+  function confirmationField(message) {
+    return `<label class="checkbox-field operation-confirm"><input type="checkbox" name="confirmed" required /><span>${h(message)}</span></label>`;
+  }
+
+  function hostingFormFooter(form, label) {
+    return `<button class="button" type="button" data-action="close-dialog">取消</button><button class="button button-primary" type="submit" form="${h(form)}">${h(label)}</button>`;
+  }
+
+  function renderSiteForm(site, data) {
+    const type = site?.type || "static";
+    const runtimes = list(data.phpRuntimes, 32);
+    return `<form id="site-config-form" data-form="site-config" class="form-stack"><p class="body-copy">仅接受域名、端口和所选类型的配置字段，不接受系统路径或 Nginx 指令。站点域名不能等于面板主机名。</p>
+      <div class="form-grid"><label class="field"><span>名称</span><input name="name" required maxlength="64" value="${h(site?.name)}" autocomplete="off" /></label><label class="field"><span>网站类型</span><select name="type">${options(Object.entries(siteTypes), type)}</select></label>
+      <label class="field full-width"><span>域名 / IP <small>最多 10 个；逗号、空格或换行分隔</small></span><textarea name="domains" rows="3" required maxlength="2600" placeholder="site.example.com" spellcheck="false">${h(site?.domains.join("\n"))}</textarea><small>使用 ASCII 域名（国际化域名请用 Punycode），不含协议、路径或通配符。</small></label>
+      <label class="field"><span>监听端口</span><input name="port" type="number" required min="1" max="65535" step="1" value="${h(site?.port ?? 80)}" /><small>80、443 或 1024–65535；不能占用面板端口。TLS 导入前请选择兼容端口。</small></label>
+      <label class="checkbox-field"><input name="enabled" type="checkbox" ${site?.enabled === false ? "" : "checked"} /><span>启用网站配置（停用时返回 503）</span></label>
+      <label class="field full-width" data-site-field="proxy" ${type === "proxy" ? "" : "hidden"}><span>反向代理上游</span><input name="upstream" type="url" maxlength="2048" value="${h(site?.upstream)}" placeholder="http://127.0.0.1:3000" autocomplete="off" spellcheck="false" ${type === "proxy" ? "required" : "disabled"} /><small>HTTP(S) 地址，不含凭据、查询或片段；不能代理面板管理入口。确认后将把网站请求转发给此上游。</small></label>
+      <label class="field full-width" data-site-field="php" ${type === "php" ? "" : "hidden"}><span>实际 PHP-FPM 运行时</span><select name="phpRuntime" ${type === "php" ? "required" : "disabled"}>${options([["", runtimes.length ? "请选择真实运行时" : "没有可用运行时，请先到软件页安装 / 启动 PHP-FPM"], ...runtimes.map((runtime) => [runtime.id, `${text(runtime.id)} · ${text(runtime.version)}`])], site?.phpRuntime || "")}</select><small>只使用后端检测到的运行时，不提供虚构的 PHP 版本。</small></label></div>
+      ${site ? `<p class="panel-subtitle">配置版本 ${h(site.revision)}；并发变更会被拒绝，不覆盖其他会话的修改。${site.tlsEnabled ? "此站点已配置 TLS，修改域名后请检查证书匹配。" : ""}</p>` : ""}
+      ${confirmationField(`我确认${site ? "修改" : "创建"}此网站，并允许以系统最高权限写入受管配置、校验及重载 Nginx；可能影响对外服务。`)}<div data-form-error></div></form>`;
+  }
+
+  function openSiteForm(id = "") {
+    const context = state.route;
+    if (!hostingWritable(context, context?.sites)) throw new API.Error("当前不允许管理网站，请重新读取权限。", "site_unavailable");
+    if (id) findSite(context, id, true);
+    const modal = openDialog(id ? "编辑网站" : "创建网站", id ? loading("正在读取最新配置版本…") : renderSiteForm(null, context.sites), hostingFormFooter("site-config-form", id ? "确认修改并提交任务" : "确认创建并提交任务"));
+    modal.context = context;
+    modal.site = null;
+    if (!id) return;
+    modal.load = async (signal) => {
+      const site = validateSite((await API.site(id, signal)).site);
+      if (site.id !== id) throw invalid();
+      modal.site = site;
+      return renderSiteForm(site, context.sites);
+    };
+    void loadDialog(modal);
+  }
+
+  function updateSiteTypeFields(form) {
+    const type = form.elements.namedItem("type").value;
+    for (const field of form.querySelectorAll("[data-site-field]")) {
+      const enabled = field.dataset.siteField === type;
+      field.hidden = !enabled;
+      for (const control of field.querySelectorAll("input, select")) { control.disabled = !enabled; control.required = enabled; }
+    }
+  }
+
+  function readSiteConfig(data, context) {
+    const read = (key) => String(data.get(key) ?? "").trim();
+    const domains = read("domains").split(/[\s,，]+/).filter(Boolean);
+    const type = read("type");
+    const port = Number(read("port"));
+    if (!read("name") || read("name").length > 64 || !Object.hasOwn(siteTypes, type)) throw new API.Error("请填写有效网站名称和类型。", "invalid_site");
+    if (!domains.length || domains.length > 10 || domains.some((value) => value.length > 253 || !/^[A-Za-z0-9.:[\]-]+$/.test(value))) throw new API.Error("请填写最多 10 个有效 ASCII 域名或 IP，不含协议、路径及通配符。", "invalid_domains");
+    if (!Number.isInteger(port) || !([80, 443].includes(port) || (port >= 1024 && port <= 65535))) throw new API.Error("网站端口必须是 80、443 或 1024–65535。", "invalid_port");
+    const site = { name: read("name"), domains, type, port, enabled: data.get("enabled") === "on" };
+    if (type === "proxy") {
+      const upstream = read("upstream");
+      let url;
+      try { url = new URL(upstream); } catch { throw new API.Error("请输入有效反向代理上游。", "invalid_upstream"); }
+      if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash || /\s/.test(upstream)) throw new API.Error("上游必须是无凭据、查询和片段的 HTTP(S) 地址。", "invalid_upstream");
+      site.upstream = upstream;
+    }
+    if (type === "php") {
+      if (!context.sites.phpRuntimes.some((runtime) => runtime.id === read("phpRuntime"))) throw new API.Error("请先安装 / 启动 PHP-FPM，并选择后端实际提供的运行时。", "php_runtime_missing");
+      site.phpRuntime = read("phpRuntime");
+    }
+    return site;
+  }
+
+  function confirmSiteChange(id, remove = false) {
+    const context = state.route;
+    const site = findSite(context, id, true);
+    const label = remove ? "删除网站配置" : site.enabled ? "停用网站" : "启用网站";
+    const detail = remove ? `仅移除受管配置，网站目录 ${text(site.root)} 及其中全部文件始终保留。网站将停止由此配置提供服务；不会删除文件。` : site.enabled ? "停用会使此网站返回 503，中断对外服务；保留所有配置和文件。" : "启用会重新提供网站内容或代理上游请求。";
+    openConfirm(label, `<p>网站：<strong>${h(site.name)}</strong> · ${h(site.domains.join(", "))}</p>${notice(`${detail}操作以版本 ${site.revision} 为依据，Nginx 校验或重载失败时请查看任务日志。`, "warning")}`, `确认${label}`, async (signal) => {
+      const result = remove ? await API.deleteSite(id, site.revision, signal) : await API.updateSite(id, site.revision, { ...siteFields(site), enabled: !site.enabled }, signal);
+      await acceptedHostingJob(context, result);
+    });
+  }
+
+  function relativeSitePath(value, allowEmpty = false) {
+    if (typeof value !== "string" || value.length > 1024 || (!value && !allowEmpty) || /[\\\u0000-\u001f]/.test(value) || (value && value.split("/").some((part) => !part || part === "." || part === ".."))) throw new API.Error("只允许网站根目录内的相对路径，不接受绝对路径、空路径段、反斜杠或上级目录。", "invalid_path");
+    return value;
+  }
+
+  function selectSiteFiles(id) {
+    const context = state.route;
+    findSite(context, id);
+    context.siteFiles = { id, path: "", offset: 0, previous: [], data: null };
+    setHTML("site-files", loading("正在读取网站目录…"));
+    void loadSiteFiles(context, context.signal);
+  }
+
+  async function loadSiteFiles(context, signal) {
+    const nav = context.siteFiles;
+    if (!nav) return;
+    context.fileController?.abort();
+    const controller = new AbortController();
+    context.fileController = controller;
+    const abort = () => controller.abort();
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener("abort", abort, { once: true });
+    try {
+      const site = findSite(context, nav.id);
+      const data = await API.siteFiles(nav.id, nav.path, nav.offset, controller.signal);
+      if (!current(context) || controller.signal.aborted || context.siteFiles !== nav) return;
+      if (relativeSitePath(data.path, true) !== nav.path || (data.nextOffset !== null && (!Number.isSafeInteger(data.nextOffset) || data.nextOffset <= nav.offset))) throw invalid("网站目录响应或分页游标无效。");
+      nav.data = { ...data, entries: requireList(data, "entries", 200) };
+      setHTML("site-files", renderSiteFileListing(context, site));
+    } catch (error) {
+      if (!aborted(error) && current(context) && context.siteFiles === nav) {
+        nav.data = null;
+        setHTML("site-files", `${errorMarkup(error)}<button class="button" type="button" data-action="close-site-files">关闭网站文件</button>`);
+      }
+    } finally {
+      signal.removeEventListener("abort", abort);
+      if (context.fileController === controller) context.fileController = null;
+    }
+  }
+
+  function renderSiteFileListing(context, site) {
+    const nav = context.siteFiles;
+    const data = nav.data;
+    const writable = hostingWritable(context, context.sites);
+    const parts = nav.path.split("/").filter(Boolean);
+    const entries = data.entries.map((entry) => {
+      const safeName = typeof entry.name === "string" && entry.name && !/[\/\\\u0000-\u001f]/.test(entry.name) && ![".", ".."].includes(entry.name);
+      const actionable = safeName && ["directory", "file"].includes(entry.type);
+      const path = nav.path ? `${nav.path}/${entry.name}` : entry.name;
+      const editable = entry.type === "file" && number(entry.size) && entry.size <= context.sites.editLimitBytes;
+      const button = actionable && (entry.type === "directory" || editable) ? `<button class="file-name-button" type="button" data-action="${entry.type === "directory" ? "site-directory" : "edit-site-text"}" data-path="${h(path)}">${icon(entry.type === "directory" ? "folder" : "file")}${h(entry.name)}</button>` : `<span class="file-name-static">${icon("file")}${h(text(entry.name))}</span>`;
+      return `<tr><td>${button}</td><td>${h(entry.type === "directory" ? "目录" : entry.type === "file" ? "普通文件" : "不可操作类型")}${entry.type === "file" && !editable ? "<small>超过文本编辑上限或大小未知</small>" : ""}</td><td>${entry.type === "file" ? h(formatBytes(entry.size)) : "—"}</td><td>${h(formatDate(entry.modified))}</td></tr>`;
+    }).join("");
+    return `<section class="panel site-files-panel"><div class="section-toolbar"><div><h2>${h(site.name)} · 网站文件</h2><p class="panel-subtitle">根目录 ${h(text(site.root))}；不跟随链接，不执行预览内容。${site.type === "proxy" ? "代理请求不会使用本地静态文件。" : ""}</p></div><button class="button button-small" type="button" data-action="close-site-files">收起</button></div>
+      <div class="file-toolbar"><nav class="file-breadcrumb" aria-label="网站文件路径"><button type="button" data-action="site-directory" data-path="">根目录</button>${parts.map((part, index) => `${icon("chevron")}<button type="button" data-action="site-directory" data-path="${h(parts.slice(0, index + 1).join("/"))}">${h(part)}</button>`).join("")}</nav><div class="form-actions"><button class="button button-small" type="button" data-action="new-site-text" ${writable ? "" : "disabled"}>新建文本</button><button class="button button-small" type="button" data-action="upload-site-file" ${writable ? "" : "disabled"}>上传文件</button></div></div>
+      <p class="path-caption">单文件上传 ≤ ${h(formatBytes(context.sites.uploadLimitBytes))}（不覆盖）；UTF-8 文本编辑 ≤ ${h(formatBytes(context.sites.editLimitBytes))}，覆盖必须匹配原 SHA-256。没有文件删除接口。</p>
+      ${table(["名称", "类型", "大小", "修改时间"], entries, "网站目录", "本页没有文件或目录。")}
+      <div class="file-bottom"><span>本页 ${data.entries.length} 项 · 偏移 ${nav.offset}</span><div class="form-actions"><button class="button button-small" type="button" data-action="site-files-previous" ${nav.previous.length ? "" : "disabled"}>上一页</button><button class="button button-small" type="button" data-action="site-files-next" ${data.nextOffset === null ? "disabled" : ""}>下一页</button></div></div></section>`;
+  }
+
+  function moveSiteDirectory(path) {
+    const context = state.route;
+    if (!context?.siteFiles) return;
+    context.siteFiles = { id: context.siteFiles.id, path: relativeSitePath(path, true), offset: 0, previous: [], data: null };
+    void loadSiteFiles(context, context.signal);
+  }
+
+  function renderSiteTextForm(context, editor) {
+    const writable = hostingWritable(context, context.sites);
+    return `<form id="site-content-form" data-form="site-content" class="form-stack"><label class="field"><span>相对路径</span><input name="path" required maxlength="1024" value="${h(editor.path)}" ${editor.sha256 ? "readonly" : ""} autocomplete="off" spellcheck="false" /></label>
+      <label class="field"><span>UTF-8 文本 <small>最多 ${h(formatBytes(context.sites.editLimitBytes))}</small></span><textarea class="code-editor" name="content" rows="16" maxlength="262144" spellcheck="false" autocomplete="off" ${writable ? "" : "readonly"}>${h(editor.content)}</textarea></label>
+      <p class="panel-subtitle">${editor.sha256 ? `原 SHA-256：${h(editor.sha256)}；不匹配将拒绝覆盖。` : "新建文件不覆盖任何既有文件。"} 编辑器不会执行内容；保存的 PHP 或网页可能由网站对外运行 / 提供。</p>
+      ${writable ? confirmationField("我确认将此文本写入上述网站文件；它会改变网站实际内容，覆盖仅在原 SHA-256 仍匹配时进行。") : notice("当前没有写入权限，仅显示只读文本。", "warning")}<div data-form-error></div></form>`;
+  }
+
+  function openSiteText(path, create = false) {
+    const context = state.route;
+    const nav = context?.siteFiles;
+    if (!nav) return;
+    const site = findSite(context, nav.id, create);
+    const writable = hostingWritable(context, context.sites);
+    const modal = openDialog(create ? "新建网站文本" : "网站文本编辑", loading(), writable ? hostingFormFooter("site-content-form", "确认写入并提交任务") : undefined);
+    modal.context = context;
+    modal.site = site;
+    if (create) {
+      modal.editor = { path: nav.path ? `${nav.path}/` : "", content: "" };
+      setHTML("dialog-content", renderSiteTextForm(context, modal.editor));
+      return;
+    }
+    path = relativeSitePath(path);
+    modal.load = async (signal) => {
+      const data = await API.siteContent(site.id, path, signal);
+      if (data.path !== path || typeof data.content !== "string" || !/^[a-f0-9]{64}$/.test(data.sha256) || utf8Bytes(data.content) > context.sites.editLimitBytes) throw invalid("文本响应必须完整且有界，并携带 SHA-256；不会覆盖未知版本。");
+      modal.editor = { path: data.path, content: data.content, sha256: data.sha256 };
+      return renderSiteTextForm(context, modal.editor);
+    };
+    void loadDialog(modal);
+  }
+
+  function openSiteUpload() {
+    const context = state.route;
+    const nav = context?.siteFiles;
+    if (!nav) return;
+    const site = findSite(context, nav.id, true);
+    const modal = openDialog("上传网站文件", `<form id="site-upload-form" data-form="site-upload" class="form-stack"><p class="body-copy">网站 <strong>${h(site.name)}</strong> · 目标目录 <span class="mono">${h(nav.path || "/（网站根目录）")}</span></p>
+      <label class="field"><span>单个文件 <small>最大 ${h(formatBytes(context.sites.uploadLimitBytes))}</small></span><input name="file" type="file" required /></label>
+      <label class="field"><span>目标文件名 <small>可选，留空使用所选文件原名</small></span><input name="filename" maxlength="255" autocomplete="off" spellcheck="false" /><small>只允许本目录中的文件名，不含路径。既有同名文件将返回冲突；文本覆盖请用编辑器。</small></label>
+      ${confirmationField("我确认上传此文件并使其成为网站真实文件。不会解压归档，不覆盖同名文件；上传的内容可能被网站对外提供或运行。")}<div data-form-error></div></form>`, hostingFormFooter("site-upload-form", "确认上传并提交任务"));
+    modal.context = context;
+    modal.site = site;
+    modal.directory = nav.path;
+  }
+
+  function openSiteTLS(id) {
+    const context = state.route;
+    findSite(context, id, true);
+    const modal = openDialog("导入网站 TLS", loading("正在读取最新网站版本…"), hostingFormFooter("site-tls-form", "确认导入并提交任务"));
+    modal.context = context;
+    modal.load = async (signal) => {
+      const site = validateSite((await API.site(id, signal)).site);
+      if (site.id !== id) throw invalid();
+      modal.site = site;
+      return `<form id="site-tls-form" data-form="site-tls" class="form-stack"><p class="body-copy">网站 <strong>${h(site.name)}</strong> · 首域名 ${h(site.domains[0])} · 端口 ${h(site.port)} · 配置版本 ${h(site.revision)}</p>
+        ${notice(site.port === 80 ? "当前端口为 80，请先编辑网站端口为 443 或受支持的高位 TLS 端口，再导入证书。" : "仅导入已有 PEM 证书和匹配私钥；由后端验证证书链、首域名 SAN 与密钥。没有自动签发或续期。", "warning")}
+        <label class="field"><span>PEM 证书链 <small>最大 64 KiB</small></span><textarea class="code-editor" name="certificate" required rows="7" maxlength="65536" spellcheck="false" autocomplete="off" placeholder="-----BEGIN CERTIFICATE-----"></textarea></label>
+        <label class="field"><span>PEM 私钥 <small>最大 16 KiB</small></span><textarea class="code-editor secret-input" name="privateKey" required rows="6" maxlength="16384" spellcheck="false" autocomplete="off" placeholder="-----BEGIN PRIVATE KEY-----"></textarea><small>只提交给同源后端，不写入浏览器存储；关闭或提交后清空。后端不返回、不记录私钥。</small></label>
+        ${confirmationField("我确认导入上述证书和私钥，修改此网站 TLS 配置并校验 / 重载 Nginx；更换证书可能影响现有 HTTPS 连接。")}<div data-form-error></div></form>`;
+    };
+    void loadDialog(modal);
+  }
+
+  async function submitHostingForm(form, data) {
+    const modal = state.modal;
+    const context = state.route;
+    if (!modal || modal.busy || modal.context !== context || !hostingWritable(context, context?.sites)) return;
+    const controls = Array.from(dialog.querySelectorAll("input, select, textarea, button"));
+    const disabled = controls.map((control) => control.disabled);
+    modal.busy = true;
+    form.dataset.busy = "true";
+    form.setAttribute("aria-busy", "true");
+    controls.forEach((control) => { control.disabled = true; });
+    const errorTarget = form.querySelector("[data-form-error]");
+    setHTML(errorTarget, "");
+    try {
+      if (data.get("confirmed") !== "on") throw new API.Error("请明确确认本次真实变更。", "confirmation_required");
+      let result;
+      switch (form.dataset.form) {
+        case "site-config": {
+          const site = readSiteConfig(data, context);
+          result = modal.site ? await API.updateSite(modal.site.id, modal.site.revision, site, modal.signal) : await API.createSite(site, modal.signal);
+          break;
+        }
+        case "site-content": {
+          const path = relativeSitePath(String(data.get("path") ?? ""));
+          const content = String(data.get("content") ?? "");
+          if (!modal.editor || (modal.editor.sha256 && modal.editor.path !== path)) throw invalid();
+          if (utf8Bytes(content) > context.sites.editLimitBytes) throw new API.Error("UTF-8 文本超过编辑上限，请缩小内容。", "content_too_large");
+          result = await API.saveSiteContent(modal.site.id, path, content, modal.editor.sha256, modal.signal);
+          break;
+        }
+        case "site-upload": {
+          const file = data.get("file");
+          if (!(file instanceof File) || !file.name || file.size > context.sites.uploadLimitBytes) throw new API.Error("请选择一个不超过上传上限的文件。", "invalid_upload");
+          const name = String(data.get("filename") ?? "").trim() || file.name;
+          if (name.includes("/") || name.length > 255) throw new API.Error("目标文件名不能含路径，且不得超过 255 字符。", "invalid_path");
+          const path = relativeSitePath(modal.directory ? `${modal.directory}/${name}` : name);
+          result = await API.uploadSiteFile(modal.site.id, path, file, modal.signal);
+          break;
+        }
+        case "site-tls": {
+          const certificate = String(data.get("certificate") ?? "").trim();
+          const privateKey = String(data.get("privateKey") ?? "").trim();
+          if (!certificate || !privateKey || utf8Bytes(certificate) > 65536 || utf8Bytes(privateKey) > 16384) throw new API.Error("证书链不得超过 64 KiB，私钥不得超过 16 KiB；两项均不能为空。", "invalid_pem_size");
+          if (modal.site.port === 80) throw new API.Error("请先编辑网站端口，再导入 TLS。当前端口 80 不兼容。", "tls_port_conflict");
+          result = await API.siteTLS(modal.site.id, modal.site.revision, certificate, privateKey, modal.signal);
+          break;
+        }
+        default: throw invalid();
+      }
+      await acceptedHostingJob(context, result);
+    } catch (error) {
+      if (!aborted(error) && state.modal === modal) setHTML(errorTarget, `${errorMarkup(error)}${error?.status === 409 ? notice("发生版本或路径冲突。未自动覆盖或重试；请先保存需要的草稿，再关闭并重新读取最新状态。", "warning") : ""}`);
+    } finally {
+      data.delete("privateKey");
+      if (form.dataset.form === "site-tls") form.elements.namedItem("privateKey").value = "";
+      if (state.modal === modal) {
+        modal.busy = false;
+        controls.forEach((control, index) => { control.disabled = disabled[index]; });
+      }
+      delete form.dataset.busy;
+      form.removeAttribute("aria-busy");
+    }
   }
 
   function renderServicesPage(context) {
@@ -685,7 +1236,7 @@
 
   // Source settings are configuration-only: three distinct provider groups, exact revision on PUT.
   function renderSourcesPage(context) {
-    setHTML(main, `${pageHeading("应用与源", "APT、Docker CE 软件仓库和 Docker 镜像加速分别配置。", refreshButton("重新读取"))}<div id="route-message"></div><div id="sources-content">${loading()}</div>`);
+    setHTML(main, `${pageHeading("应用与源", "仅保存 APT、Docker CE 仓库和镜像加速的配置模板；不会切换系统仓库。", refreshButton("重新读取"))}<div id="route-message"></div><div id="sources-content">${loading()}</div>`);
     context.refresh = (signal) => renderSection(context, "sources-content", () => API.sources(signal), (data) => {
       validateSources(data);
       state.sourceRevision = data.revision;
@@ -743,7 +1294,7 @@
           <div data-form-error></div><div class="form-actions"><button class="button" type="submit" name="intent" value="preview">预览配置</button><button class="button button-primary" type="submit" name="intent" value="save">保存设置</button><span id="source-dirty" class="muted">已读取保存版本</span></div>
         </form>
       </section><div id="source-preview"></div>
-      <section class="panel section-card"><h2>应用安装</h2><p class="body-copy">当前版本不提供应用安装或 Compose 部署。Docker 页面仅管理已连接引擎中的现有资源。</p><a class="text-link" href="#docker">打开 Docker</a></section>`;
+      <section class="panel section-card"><h2>真实软件安装</h2><p class="body-copy">软件页面提供 Nginx、PHP-FPM、MariaDB、Redis 的安装与启停，仅使用系统现有可信软件源。本页模板不会自动应用；不提供 Compose 部署或卸载。</p><a class="text-link" href="#apps">打开软件管理</a></section>`;
   }
 
   function sourceConfig(formData) {
@@ -1077,14 +1628,18 @@
             if (current(context)) setHTML("source-preview", renderSourcePreview(result));
           } else {
             if (state.sourceRevision === null) throw new API.Error("请先读取当前配置版本。", "revision_missing");
-            const result = await API.saveSources(state.sourceRevision, config, signal);
-            if (current(context)) {
-              validateSources(result);
-              state.sourceRevision = result.revision;
-              state.sourceDirty = false;
-              setHTML("sources-content", renderSourcesForm(result));
-              setHTML("route-message", notice("设置已保存到面板数据。未修改系统源文件、安装软件或重启 Docker。", "success"));
-            }
+            const revision = state.sourceRevision;
+            openConfirm("保存源配置模板", notice("只把配置模板保存到面板数据，不切换系统仓库、不安装软件。软件页仍使用主机现有可信源。", "warning"), "确认保存模板", async (dialogSignal) => {
+              const result = await API.saveSources(revision, config, dialogSignal);
+              if (current(context)) {
+                validateSources(result);
+                state.sourceRevision = result.revision;
+                state.sourceDirty = false;
+                closeDialog(true);
+                setHTML("sources-content", renderSourcesForm(result));
+                setHTML("route-message", notice("设置已保存到面板数据。未修改系统源文件、安装软件或重启 Docker。", "success"));
+              }
+            });
           }
           break;
         }
@@ -1125,6 +1680,9 @@
       modal.controller.abort();
       modal.confirm = null;
       modal.load = null;
+      modal.editor = null;
+      modal.site = null;
+      modal.context = null;
     }
     if (dialog.open) dialog.close();
     setHTML("dialog-content", "");
@@ -1213,6 +1771,51 @@
       case "close-dialog": closeDialog(); break;
       case "confirm-dialog": await confirmDialog(); break;
       case "refresh-dialog": if (state.modal) await loadDialog(state.modal); break;
+      case "app-operation": confirmAppAction(target.dataset.appId, target.dataset.operation); break;
+      case "show-job": showJob(target.dataset.jobId); break;
+      case "close-job-detail": {
+        const context = state.route;
+        if (context) {
+          context.jobDetailController?.abort();
+          context.jobId = "";
+          context.jobDetailSequence = (context.jobDetailSequence || 0) + 1;
+        }
+        state.jobSelection = "";
+        setHTML("job-detail", "");
+        break;
+      }
+      case "create-site": openSiteForm(); break;
+      case "edit-site": openSiteForm(target.dataset.siteId); break;
+      case "site-details": openSiteDetails(target.dataset.siteId); break;
+      case "toggle-site": confirmSiteChange(target.dataset.siteId); break;
+      case "delete-site": confirmSiteChange(target.dataset.siteId, true); break;
+      case "site-tls": openSiteTLS(target.dataset.siteId); break;
+      case "site-files": selectSiteFiles(target.dataset.siteId); break;
+      case "site-directory": moveSiteDirectory(target.dataset.path); break;
+      case "new-site-text": openSiteText("", true); break;
+      case "edit-site-text": openSiteText(target.dataset.path); break;
+      case "upload-site-file": openSiteUpload(); break;
+      case "close-site-files": {
+        const context = state.route;
+        context?.fileController?.abort();
+        if (context) context.siteFiles = null;
+        setHTML("site-files", "");
+        break;
+      }
+      case "site-files-next":
+      case "site-files-previous": {
+        const context = state.route;
+        const nav = context?.siteFiles;
+        if (!nav?.data) return;
+        const next = action === "site-files-next";
+        if (next ? nav.data.nextOffset === null : !nav.previous.length) return;
+        const previous = [...nav.previous];
+        const offset = next ? nav.data.nextOffset : previous.pop();
+        if (next) previous.push(nav.offset);
+        context.siteFiles = { id: nav.id, path: nav.path, offset, previous: previous.slice(-64), data: null };
+        await loadSiteFiles(context, context.signal);
+        break;
+      }
       case "cancel-totp":
         state.totpPending = false;
         if (state.accountData) setHTML("totp-section", renderTOTPSection(state.accountData));
@@ -1256,6 +1859,10 @@
     event.preventDefault();
     if (state.authChanging || form.dataset.busy === "true" || !form.reportValidity()) return;
     const data = new FormData(form);
+    if (["site-config", "site-content", "site-upload", "site-tls"].includes(form.dataset.form)) {
+      void submitHostingForm(form, data);
+      return;
+    }
     void submitForm(form, data, event.submitter?.value || "save");
   });
 
@@ -1317,6 +1924,8 @@
     if (target.id === "recovery-saved") {
       gateContent.querySelector('[data-action="finish-recovery"]').disabled = !target.checked;
     }
+    const siteForm = target.closest('form[data-form="site-config"]');
+    if (siteForm && siteForm.dataset.busy !== "true" && target.name === "type") updateSiteTypeFields(siteForm);
     const form = target.closest('form[data-form="sources"]');
     if (form && form.dataset.busy !== "true") {
       if (target.name === "os") {
@@ -1386,7 +1995,11 @@
     clearTimeout(state.pollTimer);
     state.pollTimer = null;
     const context = state.route;
-    if (document.hidden && context?.interval) context.readController?.abort();
+    if (document.hidden) {
+      if (context?.interval) context.readController?.abort();
+      context?.jobDetailController?.abort();
+      context?.fileController?.abort();
+    }
     updateRefreshLabel();
     if (!document.hidden && context?.interval) void refreshRoute(context, true);
   });

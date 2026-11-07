@@ -2,7 +2,20 @@
 
 完整中文文档：**https://linyufiee.github.io/QQON-Panel/**
 
-> **[v0.6.0 已发布](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.6.0)**，当前 `latest` 提供 Linux / Windows 中文安装与 `qqon` 维护。旧 v0.4/v0.5 保留原产物与既有访问方式。
+> **[v0.6.0 预览版已发布](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.6.0)**，当前 `latest` 提供 Linux / Windows 中文安装与 `qqon` 维护。v0.4／v0.5／v0.6 均为预览版，尚无真实业务软件安装和网站部署；标签、产物和既有访问方式保持不变。
+
+## v0.7 开发预览：独立最高权限授权
+
+当前源码新增真实 Linux 软件安装与建站，但 **v0.7.0 尚未发布**；上述一键入口仍下载 v0.6.0，不会提前获得新功能。开发接口、测试和平台边界见 [托管指南](../docs/guide/hosting.md)。
+
+- 新安装可在专门告知后输入 `同意最高权限`；无人值守需单独的 `--accept-system-management`。普通 `--yes` 和升级均不授权。
+- Linux 完整管理模式为 root，受限模式保留原 `server-panel` 身份。已有安装先迁移已核实的官方管理器，再升级程序到 ≥v0.7.0（仍保持受限），最后通过 `sudo qqon privilege` 单独备份和迁移。
+- 授权模式写入安装记录 format3，固定授权文件为 `/etc/server-panel/management-consent.json`，root 所有、0644。程序独立检查实际身份及记录，网页没有授权或任意 shell 接口。
+- Windows 采用独立 LocalSystem 同意／迁移；Linux 业务软件和 Nginx 网站操作不伪装成 Windows 能力。
+- 完整管理模式保留 Go 内存软限制、请求／任务／日志上限和较低 CPU/IO 权重；不再把包管理子进程放在旧 128 MiB cgroup 硬上限里。面板、包管理器和业务服务的内存分别衡量。
+- 新程序自身不安装 Nginx/PHP/数据库。软件页按需安装后查看真实运行状态，未运行时另行点击启动；不承诺修改开机启用策略。
+
+以下为已发布 v0.6.0 预览版的安装和维护行为。
 
 <a id="v06-开发中中文公网与快捷维护"></a>
 

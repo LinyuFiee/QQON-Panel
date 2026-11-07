@@ -1,5 +1,5 @@
 #!/bin/bash
-# QQON-Panel interactive installer protocol: 4
+# QQON-Panel interactive installer protocol: 5
 # Review this local file before running it as root. No remote script is executed.
 set -euo pipefail
 if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
@@ -58,12 +58,13 @@ bootstrap_fail() {
 bootstrap_help() {
     printf '%s\n' \
         '用法：sudo bash install.sh                         # 中文交互安装向导' \
-        '      sudo bash install.sh [--repo OWNER/REPO] [--version v0.6.0] [--mode MODE] [--port PORT] [--host HOST] [--yes]' \
+        '      sudo bash install.sh [--repo OWNER/REPO] [--version v0.7.0] [--mode MODE] [--port PORT] [--host HOST] [--yes]' \
         '      sudo bash install.sh --mode proxy --origin https://panel.example.com' \
         '      sudo bash install.sh --mode public-certificate --host HOST --cert /绝对路径/cert.pem --key /绝对路径/key.pem' \
-        '      sudo bash install.sh --upgrade [--version v0.6.0] [--yes]' \
+        '      sudo bash install.sh --upgrade [--version v0.7.0] [--yes]' \
+        '      sudo bash install.sh --mode local --yes --accept-system-management  # 独立授权 root 管理' \
         '      bash install.sh --status                    # 只读，不安装依赖' \
-        '      qqon [status|url|start|stop|restart|logs|update|backup|config]' \
+        '      qqon [status|url|start|stop|restart|logs|update|backup|config|privilege]' \
         '      qqon tls renew                              # 仅自签证书续期' \
         '' \
         '默认仓库 LinyuFiee/QQON-Panel；安装、升级仍要求 format 3 官方发行结构。' \
@@ -167,7 +168,7 @@ bootstrap_manage_arguments() {
     local action=${1:-menu} option value seen=' '
     (( $# == 0 )) || shift
     case $action in
-        menu|status|url|start|stop|restart|logs|update|backup|config) ;;
+        menu|status|url|start|stop|restart|logs|update|backup|config|privilege) ;;
         tls) [[ ${1-} == renew ]] || bootstrap_fail '证书维护仅支持 qqon tls renew。'; shift; action=renew ;;
         *) bootstrap_fail '不支持该维护命令；请运行 qqon 查看菜单。' ;;
     esac
@@ -175,7 +176,7 @@ bootstrap_manage_arguments() {
     while (( $# )); do
         option=$1; shift
         case $option in
-            --yes) value='' ;;
+            --yes|--accept-system-management) value='' ;;
             --version|--lines|--mode|--port|--origin|--host|--cert|--key)
                 (( $# )) || bootstrap_fail '维护参数缺少值。'; value=$1; shift ;;
             --version=*|--lines=*|--mode=*|--port=*|--origin=*|--host=*|--cert=*|--key=*) value=${option#*=}; option=${option%%=*} ;;
@@ -184,7 +185,8 @@ bootstrap_manage_arguments() {
         [[ $seen != *" $option "* ]] || bootstrap_fail '命令行参数重复。'
         seen+="$option "
         case $action:$option in
-            start:--yes|stop:--yes|restart:--yes|update:--yes|backup:--yes|config:--yes|renew:--yes) PANEL_BOOTSTRAP_YES=1 ;;
+            start:--yes|stop:--yes|restart:--yes|update:--yes|backup:--yes|config:--yes|renew:--yes|privilege:--yes) PANEL_BOOTSTRAP_YES=1 ;;
+            privilege:--accept-system-management) ;;
             update:--version) bootstrap_version "$value" ;;
             logs:--lines) [[ $value =~ ^[1-9][0-9]{0,2}$ ]] && (( 10#$value <= 200 )) || bootstrap_fail '日志行数范围为 1–200。' ;;
             config:--mode) [[ $value == local || $value == proxy || $value == public-selfsigned || $value == public-certificate ]] || bootstrap_fail '访问方式不受支持。' ;;
@@ -209,7 +211,7 @@ bootstrap_arguments() {
         shift
         case $option in
             --help|-h) bootstrap_help; exit 0 ;;
-            --yes|--update|--upgrade|--status|--migrate-manager) name=$option; value='' ;;
+            --yes|--update|--upgrade|--status|--migrate-manager|--accept-system-management) name=$option; value='' ;;
             --repo|--version|--origin|--port|--mode|--host|--cert|--key)
                 name=$option
                 (( $# )) || bootstrap_fail "Missing value for $name."
@@ -222,6 +224,7 @@ bootstrap_arguments() {
         seen+="$name "
         case $name in
             --yes) PANEL_BOOTSTRAP_YES=1 ;;
+            --accept-system-management) has_settings=1 ;;
             --update) PANEL_BOOTSTRAP_UPDATE=1; actions=$((actions + 1)) ;;
             --upgrade|--migrate-manager) actions=$((actions + 1)) ;;
             --status) PANEL_BOOTSTRAP_STATUS=1; actions=$((actions + 1)) ;;
@@ -469,6 +472,12 @@ LISTEN = "127.0.0.1:5173"
 LEGACY_INSTALLER_SHA256 = "bc78f2ec682704bb5beb965806ec56e511827f6d3451949a03d5b40db535eb91"
 LEGACY_WRAPPER_SHA256 = "5cdc4f05cce7189b7212e5b12496e0754985c45c1462fc2ce0aa1a86f81b1408"
 V05_INSTALLER_SHA256 = "9af6eaf93bbdd5f622bc9bc7b37e4a6f1f218298e7a403ee2d7cfffbd8630936"
+V06_INSTALLER_SHA256 = "43c30d2985e54873193f27595acb025b992f8da33defe0814b03bcc0ac538c75"
+PRIVILEGE_LIMIT = 2 * 1024 * 1024
+PRIVILEGE_FIELDS = ("privilegeMode", "privilegeConsent")
+SYSTEM_NOTICE = ("最高权限管理告知：同意后 QQON-Panel 服务将以 root 运行，可以安装软件、启停服务、"
+                 "修改 Nginx 和网站文件，程序漏洞或管理员账户泄露可能影响整台服务器。"
+                 "仍需面板登录、同源/CSRF 校验和危险操作确认。拒绝时保留低权限监控；普通 --yes 不代表同意。")
 CERT_LIMIT = 256 * 1024
 BACKUP_LIMIT = 512 * 1024 * 1024
 BACKUP_FILES = 10000
@@ -503,7 +512,7 @@ exec /bin/bash -p /usr/local/lib/server-panel/install.sh --manage "$@"
 
 
 def legacy_hashes():
-    return (LEGACY_INSTALLER_SHA256, V05_INSTALLER_SHA256)
+    return (LEGACY_INSTALLER_SHA256, V05_INSTALLER_SHA256, V06_INSTALLER_SHA256)
 
 
 class Failure(Exception):
@@ -996,6 +1005,7 @@ class Paths:
     installer = code_dir / "install.sh"
     manager_previous = code_dir / "install.sh.v0.4.0.previous"
     manager_v05_previous = code_dir / "install.sh.v0.5.0.previous"
+    manager_v06_previous = code_dir / "install.sh.v0.6.0.previous"
     updater = Path("/usr/local/bin/panel-update")
     qqon = Path("/usr/local/bin/qqon")
     config_dir = Path("/etc/server-panel")
@@ -1004,6 +1014,8 @@ class Paths:
     transaction = config_dir / "update-transaction.json"
     migration = config_dir / "manager-migration.json"
     access_transaction = config_dir / "access-transaction.json"
+    consent = config_dir / "management-consent.json"
+    privilege_transaction = config_dir / "privilege-transaction.json"
     backups = Path("/var/backups/server-panel")
     unit = Path("/etc/systemd/system/server-panel.service")
     data = Path("/var/lib/server-panel")
@@ -1186,7 +1198,7 @@ def tls_paths(config, paths=None):
 def unit_bytes(config):
     listen = config["listen"]
     public = config.get("accessMode", "").startswith("public-")
-    if config.get("format") == 2:
+    if config.get("format", 1) >= 2:
         access_config(config)
     listener(listen, public=public)
     if public:
@@ -1201,23 +1213,63 @@ def unit_bytes(config):
         require(normalized == config["origin"] and host == config["healthHost"], "Non-normalized installation origin.")
         legacy = dict(config, listen=LISTEN, healthHost=origin(normalized)[1])
         raw = legacy_unit_bytes(legacy)
-    return raw.replace(b"-listen 127.0.0.1:5173 ", b"-listen " + listen.encode("ascii") + b" ", 1)
+    raw = raw.replace(b"-listen 127.0.0.1:5173 ", b"-listen " + listen.encode("ascii") + b" ", 1)
+    if system_mode(config):
+        consent_record(config["privilegeConsent"])
+        raw = raw.replace(b"User=server-panel\nGroup=server-panel\n", b"User=root\nGroup=root\n", 1)
+        removed = (b"MemoryHigh=", b"MemoryMax=", b"TasksMax=", b"NoNewPrivileges=", b"PrivateTmp=", b"Protect",
+                   b"Restrict", b"CapabilityBoundingSet=", b"LockPersonality=")
+        raw = b"\n".join(line for line in raw.split(b"\n") if not line.startswith(removed))
+        raw = raw.replace(b"LimitNOFILE=512\n", b"LimitNOFILE=1024\nTasksMax=256\nMemoryAccounting=true\n", 1)
+        raw = raw.replace(b"TimeoutStopSec=15s\n", b"TimeoutStopSec=60s\n", 1)
+    return raw
 
 
 def config_bytes(config):
     return (json.dumps(config, ensure_ascii=True, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 
+def consent_record(value):
+    fields(value, ("format", "mode", "identity", "noticeVersion", "acceptedAt", "acceptedBy", "notice"))
+    require(integer(value["format"], 1, 1) and value["mode"] == "system" and value["identity"] == "root"
+            and integer(value["noticeVersion"], 1, 1) and value["acceptedBy"] == "root"
+            and value["notice"] == "full-system-management", "最高权限授权记录字段无效。")
+    release_date(value["acceptedAt"])
+    accepted = datetime.datetime.strptime(value["acceptedAt"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+    require(accepted.year >= 2026 and accepted <= datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=5),
+            "最高权限授权时间无效。")
+    return value
+
+
+def config3(old, digest=None):
+    new = config2(old, digest)
+    if new["format"] < 3:
+        new.update(format=3, privilegeMode="restricted", privilegeConsent=None)
+    return new
+
+
+def system_mode(config):
+    return config.get("privilegeMode", "restricted") == "system"
+
+
 def installation_config(raw):
     value = strict_json(raw, MANIFEST_LIMIT)
     expected = ("format", "repository", "listen", "origin", "healthHost", "version", "dataSchema", "commit", "buildTime",
                 "binarySHA256", "installerSHA256")
-    require(integer(value.get("format"), 1, 2), "不支持的安装记录 format；只接受 1 或 2。")
-    fields(value, expected + (("accessMode", "tls") if value["format"] == 2 else ()))
+    require(integer(value.get("format"), 1, 3), "不支持的安装记录 format；只接受 1、2 或 3。")
+    fields(value, expected + (("accessMode", "tls") if value["format"] >= 2 else ())
+           + (PRIVILEGE_FIELDS if value["format"] == 3 else ()))
+    if value["format"] == 3:
+        require(value["privilegeMode"] in ("restricted", "system"), "无效的服务权限模式。")
+        if system_mode(value):
+            consent_record(value["privilegeConsent"])
+            require(version_tuple(value["version"]) >= (0, 7, 0), "最高权限模式要求 v0.7.0 或更新的程序。")
+        else:
+            require(value["privilegeConsent"] is None, "受限模式不可含隐式权限授权。")
     require(integer(value["dataSchema"], 1, 1), "Unsupported installation format/data schema.")
     repository(value["repository"])
     version_tuple(value["version"])
-    if value["format"] == 2:
+    if value["format"] >= 2:
         access_config(value)
     else:
         listener(value["listen"])
@@ -1238,8 +1290,10 @@ def update_transaction(raw):
     new = installation_config(config_bytes(value["new"]))
     for key in ("format", "repository", "listen", "origin", "healthHost", "dataSchema", "installerSHA256"):
         require(old[key] == new[key], "Update transaction changes fixed installation settings.")
-    if old["format"] == 2:
+    if old["format"] >= 2:
         require(old["accessMode"] == new["accessMode"] and old["tls"] == new["tls"], "升级事务不得改变访问方式或证书代际。")
+    if old["format"] == 3:
+        require(all(old[key] == new[key] for key in PRIVILEGE_FIELDS), "普通升级不可更改权限模式或授权记录。")
     require(version_tuple(new["version"]) > version_tuple(old["version"])
             and old["binarySHA256"] != new["binarySHA256"], "Invalid update transaction version/digest transition.")
     return value
@@ -1248,19 +1302,22 @@ def update_transaction(raw):
 def manager_migration(raw):
     value = strict_json(raw, MANIFEST_LIMIT)
     fields(value, ("format", "phase", "old", "new"))
-    require(integer(value["format"], 1, 2) and value["phase"] in ("prepared", "ready"), "Invalid manager migration phase/format.")
+    require(integer(value["format"], 1, 3) and value["phase"] in ("prepared", "ready"), "Invalid manager migration phase/format.")
     old = installation_config(config_bytes(value["old"]))
     new = installation_config(config_bytes(value["new"]))
-    require(old["installerSHA256"] in legacy_hashes() and old["format"] == 1
+    require(old["installerSHA256"] in legacy_hashes() and old["format"] in (1, 2)
             and (old["installerSHA256"] != LEGACY_INSTALLER_SHA256 or old["listen"] == LISTEN),
-            "只能迁移固定摘要的官方 v0.4/v0.5 管理器。")
+            "只能迁移固定摘要的官方 v0.4/v0.5/v0.6 管理器。")
     if value["format"] == 1:
         require(old["installerSHA256"] == LEGACY_INSTALLER_SHA256 and new["installerSHA256"] != old["installerSHA256"]
                 and dict(new, installerSHA256=old["installerSHA256"]) == old,
                 "Manager migration may change only installerSHA256.")
-    else:
+    elif value["format"] == 2:
         require(new["installerSHA256"] not in legacy_hashes() and new == config2(old, new["installerSHA256"]),
                 "管理器迁移只允许 format2 扩充和 installerSHA256 变更；旧应用、账户与访问方式不变。")
+    else:
+        require(new["installerSHA256"] not in legacy_hashes() and new == config3(old, new["installerSHA256"]),
+                "管理器迁移只扩充 format3 受限记录；普通迁移不授予最高权限。")
     return value
 
 
@@ -1270,7 +1327,7 @@ def access_transaction(raw):
     require(integer(value["format"], 1, 1) and type(value["wasRunning"]) is bool, "访问事务格式无效。")
     old = installation_config(config_bytes(value["old"]))
     new = installation_config(config_bytes(value["new"]))
-    require(old["format"] == new["format"] == 2, "配置事务仅支持 format2。")
+    require(old["format"] == new["format"] and old["format"] in (2, 3), "配置事务仅支持 format2/3 且不可改变权限模式。")
     require({k: v for k, v in old.items() if k not in ACCESS_FIELDS} == {k: v for k, v in new.items() if k not in ACCESS_FIELDS},
             "配置事务不得改变应用身份、管理器摘要或账户 schema。")
     if new["tls"] is not None:
@@ -1373,6 +1430,8 @@ class Runtime:
         if verb != "daemon-reload":
             arguments.extend(options)
             arguments.append(UNIT)
+        if verb in ("stop", "restart"):
+            timeout = max(timeout, 65)
         code, output = self.run(arguments, timeout)
         require(not checked or code == 0, "systemctl " + verb + " failed.")
         return code, output
@@ -1393,7 +1452,7 @@ class Runtime:
         return state["ActiveState"] == "active"
 
     def stop_wait(self):
-        self.systemctl("stop")
+        self.systemctl("stop", timeout=65)
         end = time.monotonic() + 15
         while time.monotonic() < end:
             if self.service_state()["ActiveState"] in ("inactive", "failed"):
@@ -1514,6 +1573,21 @@ class Runtime:
             return
         require(self.prompt("输入 yes 确认继续，其他输入取消：") == "yes", "已取消；安装状态未更改。")
 
+    def verify_identity(self, config):
+        code, raw = self.run(["/usr/bin/systemctl", "show", UNIT, "--property=User,Group,MainPID", "--no-pager"], timeout=5)
+        require(code == 0, "无法验证实际服务身份。")
+        values = dict(line.split("=", 1) for line in raw.decode("ascii").strip().splitlines())
+        expected = "root" if system_mode(config) else ACCOUNT
+        require(values.get("User") == expected and values.get("Group") == expected
+                and re.fullmatch(r"[1-9][0-9]{0,9}", values.get("MainPID", "")), "服务身份或进程 PID 不符合授权记录。")
+        identity = (0, 0) if system_mode(config) else self.account(self.paths.data)
+        with open("/proc/" + values["MainPID"] + "/status", "rb") as status_file:
+            raw_status = status_file.read(16385)
+        require(len(raw_status) <= 16384, "进程状态超过读取上限。")
+        status = {line.split(b":", 1)[0]: line.split(b":", 1)[1].split() for line in raw_status.splitlines() if b":" in line}
+        require(status.get(b"Uid", [])[1:2] == [str(identity[0]).encode()]
+                and status.get(b"Gid", [])[1:2] == [str(identity[1]).encode()], "实际运行 UID/GID 与管理模式不一致。")
+
     def health_once(self, config, timeout):
         connection = None
         try:
@@ -1589,11 +1663,34 @@ class Manager:
         self.runtime.paths = self.paths
         self.downloads = downloads or Downloads()
 
+    def identity(self, config):
+        return (0, 0) if system_mode(config) else self.runtime.account(self.paths.data)
+
+    def check_consent(self, config):
+        p, f = self.paths, self.files
+        if system_mode(config):
+            saved = consent_record(strict_json(f.read(p.consent, 4096, mode=0o644), 4096))
+            require(saved == config["privilegeConsent"], "固定授权记录与安装记录不一致。")
+        elif f.exists(p.consent):
+            raise Failure("受限服务旁发现授权记录，拒绝隐式接管；请检查未完成的权限事务。")
+
+    def choose_privilege(self, options, required=False):
+        print(SYSTEM_NOTICE, flush=True)
+        accepted = options.accept_system_management
+        if not accepted and not options.yes:
+            accepted = self.runtime.prompt("输入“同意最高权限”启用 root 管理，其他输入保持受限模式：") == "同意最高权限"
+        if not accepted:
+            require(not required, "未同意最高权限；没有执行权限迁移，--yes 不能代替授权。")
+            return None
+        return {"format": 1, "mode": "system", "identity": "root", "noticeVersion": 1,
+                "acceptedAt": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "acceptedBy": "root", "notice": "full-system-management"}
+
     def check_tls(self, config):
         if config.get("tls") is None:
             return
         p, f, r = self.paths, self.files, self.runtime
-        identity = r.account(p.data)
+        identity = self.identity(config)
         require(identity is not None, "固定服务账户不存在。")
         cert, key = tls_paths(config, p)
         for directory in (p.tls_root, cert.parent):
@@ -1621,7 +1718,7 @@ class Manager:
             return config
         p, f, r = self.paths, self.files, self.runtime
         require(version_tuple(config["version"]) >= (0, 6, 0), "当前旧应用没有证书 CLI；先升级至 v0.6，再运行 qqon config 配置公网 HTTPS。")
-        uid, gid = r.account(p.data)
+        uid, gid = self.identity(config)
         f.mkdir(p.tls_root, mode=0o750, gid=gid)
         generation = secrets.token_hex(16)
         directory = p.tls_root / generation
@@ -1668,14 +1765,15 @@ class Manager:
             expected_unit = legacy_unit_bytes(config)
         else:
             expected_unit = unit_bytes(config)
-        if config["format"] == 2:
+        if config["format"] >= 2:
             require(f.read(p.qqon, WRAPPER_LIMIT, mode=0o755) == QQON_WRAPPER, "qqon 快捷入口被修改，拒绝接管。")
             self.check_tls(config)
+        self.check_consent(config)
         if check_unit:
             require(f.read(p.unit, SUMS_LIMIT, mode=0o644) == expected_unit, "Unknown or modified service unit.")
         if f.exists(p.previous):
             f.check(p.previous, mode=0o755)
-        identity = r.account(p.data)
+        identity = self.identity(config)
         require(identity is not None, "The fixed service account is missing.")
         f.check(p.data, directory=True, mode=0o700, uid=identity[0], gid=identity[1])
         r.inspect_unit(p.unit)
@@ -1709,6 +1807,8 @@ class Manager:
             result["pendingBinaryRecovery"] = f.exists(p.transaction)
             result["pendingManagerRecovery"] = f.exists(p.migration)
             result["pendingAccessRecovery"] = f.exists(p.access_transaction)
+            result["pendingPrivilegeRecovery"] = f.exists(p.privilege_transaction)
+            result["privilegeMode"] = config.get("privilegeMode", "restricted")
         if config.get("tls") is not None:
             result["tls"] = config["tls"]
             expiry = datetime.datetime.strptime(config["tls"]["notAfter"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
@@ -1747,8 +1847,8 @@ class Manager:
 
     def clear_marker(self, path, raw):
         p, f = self.paths, self.files
-        require(path in (p.transaction, p.migration, p.access_transaction), "Unknown management marker path.")
-        require(f.read(path, MANIFEST_LIMIT, mode=0o600) == raw, "Management transaction changed before completion.")
+        require(path in (p.transaction, p.migration, p.access_transaction, p.privilege_transaction), "Unknown management marker path.")
+        require(f.read(path, PRIVILEGE_LIMIT if path == p.privilege_transaction else MANIFEST_LIMIT, mode=0o600) == raw, "Management transaction changed before completion.")
         try:
             os.unlink(path)
             f.sync_dir(path.parent)
@@ -1761,7 +1861,9 @@ class Manager:
         self.clear_marker(self.paths.transaction, raw)
 
     def manager_backup(self, old):
-        return self.paths.manager_previous if old["installerSHA256"] == LEGACY_INSTALLER_SHA256 else self.paths.manager_v05_previous
+        if old["installerSHA256"] == LEGACY_INSTALLER_SHA256:
+            return self.paths.manager_previous
+        return self.paths.manager_v06_previous if old["installerSHA256"] == V06_INSTALLER_SHA256 else self.paths.manager_v05_previous
 
     def recover_migration(self):
         p, f, r = self.paths, self.files, self.runtime
@@ -1783,7 +1885,7 @@ class Manager:
         if marker["phase"] == "ready" or f.exists(backup_path):
             backup = f.read(backup_path, SCRIPT_LIMIT, mode=0o755)
             require(hashlib.sha256(backup).hexdigest() == old_hash, "Manager backup SHA-256 mismatch.")
-        if marker["format"] == 2 and f.exists(p.qqon):
+        if marker["format"] >= 2 and f.exists(p.qqon):
             require(f.read(p.qqon, WRAPPER_LIMIT, mode=0o755) == QQON_WRAPPER, "迁移中的 qqon 入口被修改，拒绝恢复。")
         self.inspect_management(dict(old, installerSHA256=digest))
         require(hashlib.sha256(f.read(p.binary, BINARY_LIMIT, mode=0o755)).hexdigest() == old["binarySHA256"],
@@ -1793,7 +1895,7 @@ class Manager:
                 if digest != old_hash:
                     f.atomic_bytes(p.installer, backup, 0o755)
                 f.atomic_bytes(p.config, config_bytes(old), 0o644)
-                if marker["format"] == 2 and f.exists(p.qqon):
+                if marker["format"] >= 2 and old["format"] == 1 and f.exists(p.qqon):
                     os.unlink(p.qqon)
                     f.sync_dir(p.qqon.parent)
                 self.clear_marker(p.migration, raw)
@@ -1805,11 +1907,14 @@ class Manager:
     def migrate_manager(self, old, source):
         p, f, r = self.paths, self.files, self.runtime
         require(not any(f.exists(path) for path in (p.transaction, p.migration, p.access_transaction)), "Pending transactions must be recovered before manager migration.")
-        require(old["installerSHA256"] in legacy_hashes() and old["format"] == 1,
-                "只能迁移固定摘要的官方 v0.4/v0.5 管理器。")
-        require(not f.exists(p.qqon), "qqon 路径已存在，拒绝覆盖未知入口。")
-        new = config2(old, hashlib.sha256(source).hexdigest())
-        marker = {"format": 2, "phase": "prepared", "old": old, "new": new}
+        require(old["installerSHA256"] in legacy_hashes() and old["format"] in (1, 2),
+                "只能迁移固定摘要的官方 v0.4/v0.5/v0.6 管理器。")
+        if old["format"] >= 2:
+            require(f.read(p.qqon, WRAPPER_LIMIT, mode=0o755) == QQON_WRAPPER, "旧 qqon 入口不匹配。")
+        else:
+            require(not f.exists(p.qqon), "qqon 路径已存在，拒绝覆盖未知入口。")
+        new = config3(old, hashlib.sha256(source).hexdigest())
+        marker = {"format": 3, "phase": "prepared", "old": old, "new": new}
         raw = config_bytes(marker)
         manager_migration(raw)
         previous = f.read(p.installer, SCRIPT_LIMIT, mode=0o755)
@@ -1818,8 +1923,8 @@ class Manager:
         if f.exists(backup_path):
             require(hashlib.sha256(f.read(backup_path, SCRIPT_LIMIT, mode=0o755)).hexdigest() == old["installerSHA256"],
                     "Unknown manager backup; refusing overwrite.")
-        r.confirm("将迁移已核实的 v0.4/v0.5 管理器到本次审阅脚本，安装记录升级为 format2，生成 qqon。"
-                  "旧二进制、账户数据、原 local/proxy 访问方式、服务 unit 和 panel-update 保持不变。必须单独终端确认。", False)
+        r.confirm("将迁移已核实的 v0.4/v0.5/v0.6 管理器到本次审阅脚本，扩充 format3 受限记录，保留 qqon。"
+                  "旧二进制、账户数据、访问方式、低权限服务 unit 和 panel-update 保持不变，不进行最高权限授权。必须单独终端确认。", False)
         f.atomic_bytes(p.migration, raw, 0o600)
         try:
             f.atomic_bytes(backup_path, previous, 0o755)
@@ -1840,7 +1945,7 @@ class Manager:
             except BaseException as rollback:
                 raise Failure("Manager migration failed; rollback also failed. Journal and backup retained; application data was not changed.") from rollback
             raise Failure("Manager migration failed; rollback succeeded. The pinned old manager was restored.") from exc
-        print("管理器迁移完成，旧应用和原访问地址保留；请先 sudo qqon update 升级应用至 v0.6，再 sudo qqon config 配置公网 HTTPS。")
+        print("管理器迁移完成，旧应用、受限身份和访问地址保留；先 sudo qqon update 升级至 v0.7.0 或更新版本，再 sudo qqon privilege 单独授权。")
 
     def choose_access(self, options, old=None):
         r = self.runtime
@@ -1934,7 +2039,7 @@ class Manager:
         if not marker["wasRunning"]:
             print("服务原本停止，检查后已恢复停止状态。")
 
-    def backup(self, config):
+    def backup(self, config, resume=True):
         p, f, r = self.paths, self.files, self.runtime
         f.mkdir(p.backups, mode=0o700)
         require(p.data not in p.backups.parents and p.data != p.backups, "备份目录不能位于数据源内。")
@@ -1983,6 +2088,8 @@ class Manager:
                         for source, name in ((p.config, "metadata/install.json"), (p.unit, "metadata/server-panel.service"),
                                              (p.installer, "metadata/install.sh"), (p.updater, "metadata/panel-update"), (p.qqon, "metadata/qqon")):
                             add(source, name)
+                        if system_mode(config):
+                            add(p.consent, "metadata/management-consent.json")
                         if config.get("tls") is not None:
                             cert, key = tls_paths(config, p)
                             add(cert, "tls/" + config["tls"]["generation"] + "/cert.pem")
@@ -1996,7 +2103,7 @@ class Manager:
         finally:
             try:
                 with r.rollback_signals():
-                    if was_running:
+                    if was_running and resume:
                         r.systemctl("start")
                         r.healthy(config)
                     else:
@@ -2007,6 +2114,182 @@ class Manager:
             raise Failure("备份失败（" + type(failure).__name__ + "）；已恢复原服务运行状态，未输出成功归档。") from failure
         print("一致性备份：" + str(path) + "；大小 " + str(f.info(path).st_size) + " 字节；已恢复原服务运行状态。")
         print("敏感备份含账户数据、管理记录及活动 TLS 私钥，仅 root 可读；不自动恢复或覆盖旧认证数据。")
+        return path
+
+    def privilege_path(self, root, relative):
+        require(root in ("data", "tls") and isinstance(relative, str) and len(relative) <= 1024
+                and "\\" not in relative and "\x00" not in relative, "权限事务路径无效。")
+        require(relative == "" or all(part not in ("", ".", "..") for part in relative.split("/")), "权限事务不可包含路径穿越。")
+        base = self.paths.data if root == "data" else self.paths.tls_root
+        return base / relative
+
+    def privilege_snapshot(self, old):
+        p, f = self.paths, self.files
+        identity = self.runtime.account(p.data)
+        require(identity is not None, "旧服务账户不存在，不能进行权限迁移。")
+        result, total = [], 0
+        stack = [("data", "")]
+        if f.exists(p.tls_root):
+            stack.append(("tls", ""))
+        while stack:
+            root, relative = stack.pop()
+            path = self.privilege_path(root, relative)
+            entry = f.info(path)
+            directory = stat.S_ISDIR(entry.st_mode)
+            require(not stat.S_ISLNK(entry.st_mode) and (directory or (stat.S_ISREG(entry.st_mode) and entry.st_nlink == 1)),
+                    "权限迁移拒绝符号链接、硬链接与特殊文件。")
+            require(entry.st_uid in (0, identity[0]) and entry.st_gid in (0, identity[1])
+                    and not entry.st_mode & 0o7022, "权限迁移发现未知属主或不安全权限。")
+            result.append({"root": root, "path": relative, "uid": entry.st_uid, "gid": entry.st_gid,
+                           "mode": stat.S_IMODE(entry.st_mode), "directory": directory})
+            require(len(result) <= BACKUP_FILES, "权限迁移文件数超过 10000 上限。")
+            if directory:
+                with os.scandir(path) as entries:
+                    for child in entries:
+                        require(len(stack) + len(result) < BACKUP_FILES, "权限迁移目录超过上限。")
+                        name = relative + "/" + child.name if relative else child.name
+                        stack.append((root, name))
+            else:
+                total += entry.st_size
+                require(total <= BACKUP_LIMIT, "权限迁移数据超过 512 MiB，请先人工维护。")
+        return result
+
+    def apply_privilege_owners(self, entries, restore=False):
+        # The panel is stopped throughout. Validate the entire finite tree before
+        # changing any owner, and never follow links during chown/chmod.
+        f = self.files
+        for item in entries:
+            path = self.privilege_path(item["root"], item["path"])
+            info = f.info(path)
+            require(not stat.S_ISLNK(info.st_mode) and (stat.S_ISDIR(info.st_mode) if item["directory"]
+                    else stat.S_ISREG(info.st_mode) and info.st_nlink == 1), "权限事务对象类型已变化，拒绝继续。")
+        for item in reversed(entries):
+            path = self.privilege_path(item["root"], item["path"])
+            self.files.owner_mode(path, item["uid"] if restore else 0, item["gid"] if restore else 0, item["mode"])
+        for root in {item["root"] for item in entries}:
+            f.sync_dir(self.privilege_path(root, ""))
+
+    def privilege_marker(self, raw):
+        value = strict_json(raw, PRIVILEGE_LIMIT)
+        fields(value, ("format", "phase", "old", "new", "wasRunning", "entries", "backup"))
+        require(integer(value["format"], 1, 1) and value["phase"] in ("prepared", "ready")
+                and type(value["wasRunning"]) is bool, "权限迁移事务格式无效。")
+        old, new = installation_config(config_bytes(value["old"])), installation_config(config_bytes(value["new"]))
+        expected = dict(config3(old), privilegeMode="system", privilegeConsent=new.get("privilegeConsent"))
+        require(not system_mode(old) and new == expected, "权限事务改变了未授权的安装字段。")
+        consent_record(new["privilegeConsent"])
+        require(isinstance(value["entries"], list) and len(value["entries"]) <= BACKUP_FILES, "权限快照超过上限。")
+        identity = self.runtime.account(self.paths.data)
+        require(identity is not None, "权限恢复需要原服务账户。")
+        seen = set()
+        for item in value["entries"]:
+            fields(item, ("root", "path", "uid", "gid", "mode", "directory"))
+            path = self.privilege_path(item["root"], item["path"])
+            require(path not in seen and type(item["directory"]) is bool
+                    and integer(item["uid"], 0, 2147483647) and item["uid"] in (0, identity[0])
+                    and integer(item["gid"], 0, 2147483647) and item["gid"] in (0, identity[1])
+                    and integer(item["mode"], 0, 0o777) and not item["mode"] & 0o022,
+                    "权限快照属主或模式无效。")
+            seen.add(path)
+        if value["phase"] == "prepared":
+            require(not value["entries"] and value["backup"] is None, "准备阶段不可含未验证快照。")
+        else:
+            require(self.paths.data in seen and isinstance(value["backup"], str)
+                    and re.fullmatch(r"backup-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{16}\.tar", value["backup"], re.ASCII), "权限迁移缺少一致性备份。")
+            self.files.check(self.paths.backups / value["backup"], mode=0o600)
+        return value
+
+    def recover_privilege(self, arch):
+        p, f, r = self.paths, self.files, self.runtime
+        if not f.exists(p.privilege_transaction):
+            return False
+        require(not any(f.exists(path) for path in (p.transaction, p.migration, p.access_transaction)), "权限事务与其它事务冲突。")
+        raw = f.read(p.privilege_transaction, PRIVILEGE_LIMIT, mode=0o600)
+        marker = self.privilege_marker(raw)
+        old, new = marker["old"], marker["new"]
+        current = installation_config(f.read(p.config, MANIFEST_LIMIT, mode=0o644))
+        require(current in (old, new), "权限事务与当前安装记录不一致。")
+        require(f.read(p.unit, SUMS_LIMIT, mode=0o644) in (unit_bytes(old), unit_bytes(new)), "权限事务中服务模板已被修改。")
+        require(hashlib.sha256(f.read(p.installer, SCRIPT_LIMIT, mode=0o755)).hexdigest() == old["installerSHA256"]
+                and hashlib.sha256(f.read(p.binary, BINARY_LIMIT, mode=0o755)).hexdigest() == old["binarySHA256"], "权限恢复时程序摘要不匹配。")
+        if f.exists(p.consent):
+            require(consent_record(strict_json(f.read(p.consent, 4096, mode=0o644), 4096)) == new["privilegeConsent"], "授权记录被修改。")
+        r.inspect_unit(p.unit)
+        try:
+            with r.rollback_signals():
+                r.stop_wait()
+                if marker["phase"] == "ready":
+                    current_entries = self.privilege_snapshot(old)
+                    originals = {(item["root"], item["path"]): item for item in marker["entries"]}
+                    # A failed startup may have created a log/task file. Restore
+                    # those new data objects to the former service identity too.
+                    identity = r.account(p.data)
+                    merged = []
+                    for item in current_entries:
+                        original = originals.pop((item["root"], item["path"]), None)
+                        if original is None and item["root"] == "data":
+                            original = dict(item, uid=identity[0], gid=identity[1], mode=0o700 if item["directory"] else 0o600)
+                        merged.append(original or item)
+                    require(not originals, "权限恢复缺少原文件，备份保留供人工核查。")
+                    self.apply_privilege_owners(merged, restore=True)
+                f.atomic_bytes(p.unit, unit_bytes(old), 0o644)
+                f.atomic_bytes(p.config, config_bytes(old), 0o644)
+                if f.exists(p.consent):
+                    os.unlink(p.consent)
+                    f.sync_dir(p.config_dir)
+                r.systemctl("daemon-reload")
+                if marker["wasRunning"]:
+                    r.systemctl("start")
+                    r.healthy(old)
+                    r.verify_identity(old)
+                self.clear_marker(p.privilege_transaction, raw)
+        except BaseException as exc:
+            raise Failure("权限恢复失败；事务和一致性备份保留，未重置账户，请再次运行 qqon privilege 恢复。") from exc
+        print("已恢复原受限身份、文件属主、访问配置和服务运行状态；备份保留。")
+        return True
+
+    def apply_privilege(self, old, options, arch):
+        p, f, r = self.paths, self.files, self.runtime
+        if system_mode(old):
+            self.check_consent(old)
+            print("已经明确授权最高权限；没有重复迁移。")
+            return
+        require(version_tuple(old["version"]) >= (0, 7, 0), "先升级程序至 v0.7.0 或更新版本，再独立授权。")
+        require(not any(f.exists(path) for path in (p.transaction, p.migration, p.access_transaction, p.privilege_transaction, p.consent)), "未完成事务或已有授权记录阻止迁移。")
+        consent = self.choose_privilege(options, required=True)
+        new = dict(config3(old), privilegeMode="system", privilegeConsent=consent)
+        marker = {"format": 1, "phase": "prepared", "old": old, "new": new, "wasRunning": r.running(), "entries": [], "backup": None}
+        raw = config_bytes(marker)
+        self.privilege_marker(raw)
+        f.atomic_bytes(p.privilege_transaction, raw, 0o600)
+        try:
+            r.stop_wait()
+            entries = self.privilege_snapshot(old)
+            backup = self.backup(old, resume=False)
+            marker.update(phase="ready", entries=entries, backup=backup.name)
+            raw = config_bytes(marker)
+            self.privilege_marker(raw)
+            f.atomic_bytes(p.privilege_transaction, raw, 0o600)
+            self.apply_privilege_owners(entries)
+            f.atomic_bytes(p.consent, config_bytes(consent), 0o644)
+            f.atomic_bytes(p.unit, unit_bytes(new), 0o644)
+            f.atomic_bytes(p.config, config_bytes(new), 0o644)
+            r.systemctl("daemon-reload")
+            r.systemctl("start")
+            r.healthy(new)
+            r.verify_identity(new)
+            self.check_consent(new)
+            self.inspect_management(new)
+            if not marker["wasRunning"]:
+                r.stop_wait()
+            self.clear_marker(p.privilege_transaction, raw)
+        except BaseException as exc:
+            try:
+                self.recover_privilege(arch)
+            except BaseException as rollback:
+                raise Failure("权限迁移失败且恢复未完成；保留事务和备份，禁止普通升级继续覆盖。") from rollback
+            raise Failure("权限迁移失败；已恢复受限身份和原服务状态。") from exc
+        print("最高权限管理已授权并验证 root 运行身份；账号、TOTP、访问地址与证书内容保留。业务软件仍需按需安装。")
 
     def manage(self, options, source, arch):
         action = options.manage
@@ -2018,10 +2301,12 @@ class Manager:
         with r.lock(p, f):
             require(not f.exists(p.migration), "管理器迁移未完成；请使用审阅后的 install.sh --upgrade 恢复。")
             self.known_manager(source)
-            if self.recover_transaction(arch) or self.recover_access(arch):
+            if self.recover_privilege(arch) or self.recover_transaction(arch) or self.recover_access(arch):
                 return
             old, _, _ = self.inspect(arch)
-            require(old["format"] == 2 and old["installerSHA256"] not in legacy_hashes(), "维护功能要求 format2；旧管理器必须单独确认迁移。")
+            require(old["format"] >= 2 and old["installerSHA256"] not in legacy_hashes(), "维护功能要求 format2/3；旧管理器必须单独确认迁移。")
+            if action == "privilege":
+                return self.apply_privilege(old, options, arch)
             if action in ("start", "stop", "restart", "backup"):
                 r.confirm("即将执行 " + {"start": "启动", "stop": "停止", "restart": "重启", "backup": "停服一致性备份"}[action] + "；仅操作固定服务 " + UNIT + "。", options.yes)
                 if action == "backup":
@@ -2200,11 +2485,14 @@ class Manager:
         p, f, r = self.paths, self.files, self.runtime
         unit_written = False
         try:
-            uid, gid = r.account(p.data, create=True)
+            uid, gid = (0, 0) if system_mode(config) else r.account(p.data, create=True)
+
             f.mkdir(p.code_dir)
             f.mkdir(p.config_dir)
             f.mkdir(p.data, mode=0o700, uid=uid, gid=gid)
             config = self.prepare_tls(config, candidate, cert_source, key_source)
+            if system_mode(config):
+                f.atomic_bytes(p.consent, config_bytes(config["privilegeConsent"]), 0o644)
             f.atomic_bytes(p.installer, source, 0o755)
             f.atomic_bytes(p.updater, WRAPPER, 0o755)
             f.atomic_bytes(p.qqon, QQON_WRAPPER, 0o755)
@@ -2214,6 +2502,9 @@ class Manager:
             r.systemctl("daemon-reload")
             r.systemctl("start")
             r.healthy(config)
+            if system_mode(config):
+                r.verify_identity(config)
+                self.check_consent(config)
             r.systemctl("enable")
             f.atomic_bytes(p.config, config_bytes(config), 0o644)
             return config
@@ -2241,10 +2532,11 @@ class Manager:
             if self.recover_migration():
                 return
             self.known_manager(source)
-            if self.recover_access(arch):
+            if self.recover_privilege(arch) or self.recover_access(arch):
                 return
             recovered = self.recover_transaction(arch)
             if f.exists(p.config):
+                require(not options.accept_system_management, "已有安装请使用 qqon privilege 独立授权，不能通过安装或升级自动切换身份。")
                 old, old_raw, current = self.inspect(arch)
                 if recovered:
                     print("中断的升级已恢复；v" + current["version"]
@@ -2282,12 +2574,16 @@ class Manager:
             settings, cert_source, key_source = (self.choose_access(options) if old is None else ({k: old[k] for k in ACCESS_FIELDS if k in old}, None, None))
             if old is None and settings["accessMode"].startswith("public-"):
                 require(version_tuple(tag, tagged=True) >= (0, 6, 0), "选择的旧应用没有证书 CLI；请安装 v0.6 或显式使用 --mode local / proxy。")
+            new_consent = self.choose_privilege(options) if old is None else None
+            if new_consent is not None:
+                require(version_tuple(tag, tagged=True) >= (0, 7, 0), "最高权限模式只支持 v0.7.0 或更新程序，旧版请保持受限模式。")
             action = "从 v" + old["version"] + " 升级" if old else "安装"
             r.confirm(action + "至 " + tag + "，仓库 " + repo + "；固定服务 " + UNIT + "；访问地址 "
                       + (settings["origin"] or "http://" + settings["listen"]) + "。\n仅信任所选 GitHub 仓库与 HTTPS；SHA-256 不是独立发布签名。", options.yes)
             with f.staging(p.binary.parent) as directory:
                 candidate, metadata, digest = self.stage_release(directory, repo, tag, sizes, arch)
-                config = dict(old) if old is not None else {"format": 2, "repository": repo, "dataSchema": 1,
+                config = dict(old) if old is not None else {"format": 3, "repository": repo, "dataSchema": 1,
+                          "privilegeMode": "system" if new_consent else "restricted", "privilegeConsent": new_consent,
                           "installerSHA256": hashlib.sha256(source).hexdigest(), **settings}
                 config.update(version=metadata["version"], commit=metadata["commit"], buildTime=metadata["buildTime"], binarySHA256=digest)
                 if old is None:
@@ -2312,7 +2608,7 @@ def arguments(argv):
         if action == "tls":
             require(argv and argv[0] == "renew", "证书维护仅支持 qqon tls renew。")
             argv, action = argv[1:], "renew"
-        require(action in ("menu", "status", "url", "start", "stop", "restart", "logs", "update", "backup", "config", "renew"), "不支持该维护命令。")
+        require(action in ("menu", "status", "url", "start", "stop", "restart", "logs", "update", "backup", "config", "renew", "privilege"), "不支持该维护命令。")
     parser = ChineseParser(description="QQON 中文安装与固定服务维护；公网 HTTPS 默认端口 8443。", allow_abbrev=False)
     parser._positionals.title = "位置参数"
     parser._optionals.title = "选项"
@@ -2325,7 +2621,8 @@ def arguments(argv):
     parser.add_argument("--cert", help="导入 PEM 证书的绝对路径，不保存来源路径")
     parser.add_argument("--key", help="导入 PEM 私钥的绝对路径，不输出内容")
     parser.add_argument("--lines", help=argparse.SUPPRESS)
-    parser.add_argument("--yes", action="store_true", help="显式自动确认；不用于旧管理器迁移")
+    parser.add_argument("--yes", action="store_true", help="确认普通操作；不授权最高权限或跳过管理器迁移确认")
+    parser.add_argument("--accept-system-management", action="store_true", help="已阅读最高权限告知并明确授权 root 管理；仅新安装或 qqon privilege")
     parser.add_argument("--update", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--upgrade", action="store_true", help="升级应用或单独确认迁移已知旧管理器")
     parser.add_argument("--migrate-manager", action="store_true", help="仅迁移固定摘要的 v0.4/v0.5 管理器")
@@ -2351,11 +2648,13 @@ def arguments(argv):
     require(actions <= 1 and not (action and actions), "Choose exactly one management action.")
     if action:
         allowed = {"logs": {"--lines"}, "update": {"--version", "--yes"},
+                   "privilege": {"--yes", "--accept-system-management"},
                    "config": {"--mode", "--port", "--origin", "--host", "--cert", "--key", "--yes"}}
         flags = allowed.get(action, {"--yes"} if action in ("start", "stop", "restart", "backup", "renew") else set())
         require(seen <= flags, "该维护命令不接受这些参数；只读命令禁止变更选项。")
         result.update = action == "update"
     elif actions:
+        require(not result.accept_system_management, "升级、查询和管理器迁移不能附带最高权限授权；使用 qqon privilege。")
         require(all(value is None for value in settings), "Update/status settings come only from root-owned install.json; --repo/--origin/--port are forbidden.")
         require(not result.status or (result.version is None and not result.yes), "--status accepts no mutation options.")
     else:
@@ -2371,9 +2670,9 @@ def main():
     options = arguments(sys.argv[2:])
     manager = Manager()
     if options.manage == "menu":
-        answer = manager.runtime.prompt("QQON 维护\n1 状态  2 访问地址  3 启动  4 停止  5 重启\n6 日志  7 更新  8 备份  9 配置  10 自签证书续期  0 退出\n请选择 [0]：")
+        answer = manager.runtime.prompt("QQON 维护\n1 状态  2 访问地址  3 启动  4 停止  5 重启\n6 日志  7 更新  8 备份  9 配置  10 自签证书续期  11 最高权限授权  0 退出\n请选择 [0]：")
         choices = {"1": "status", "2": "url", "3": "start", "4": "stop", "5": "restart", "6": "logs",
-                   "7": "update", "8": "backup", "9": "config", "10": "renew"}
+                   "7": "update", "8": "backup", "9": "config", "10": "renew", "11": "privilege"}
         if answer in ("", "0"):
             return
         require(answer in choices, "菜单选择无效；未进行变更。")

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 	"panel/internal/auth"
 	"panel/internal/buildinfo"
 	"panel/internal/machine"
+	"panel/internal/management"
 	"panel/internal/platform"
 	"panel/internal/server"
 	"panel/internal/sources"
@@ -58,12 +60,20 @@ func newIntegrationApp(t testing.TB) *integrationApp {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = updateService.Close() })
+	hosting, err := openHostingServices(dir, "panel.test", 5173, authService.Record, management.New(), func() error {
+		return errors.New("isolated test: no system management consent")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = hosting.Close() })
 	rootMux, apiMux := http.NewServeMux(), http.NewServeMux()
 	authService.Register(rootMux)
 	rootMux.HandleFunc("GET /healthz", healthHandler(build))
 	machineService.Register(apiMux)
 	sourceService.Register(apiMux)
 	updateService.Register(apiMux)
+	hosting.Register(apiMux)
 	rootMux.Handle("/api/", authService.Protect(apiMux))
 	rootMux.Handle("/", static)
 	handler, err := server.Guard(rootMux, server.Options{Origins: []string{"http://panel.test"}, MaxConcurrent: 24})

@@ -234,6 +234,10 @@ class FakeRuntime:
         panel.require(self.active and binary_details(self.paths.binary)["version"] == config["version"], "Wrong running version.")
         panel.require(config["version"] not in self.fail_health, "Injected health failure.")
 
+    def verify_identity(self, config):
+        self.events.append(("verify-identity", config.get("privilegeMode", "restricted")))
+        panel.require(self.active, "Identity verification requires a running service.")
+
     def confirm(self, message, unattended):
         assert unattended is True
         self.events.append(("confirm", message))
@@ -270,7 +274,7 @@ class InstallationTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
         self.paths = types.SimpleNamespace(**{name: self.root.joinpath(*getattr(panel.Paths, name).parts[1:])
-                                              for name in ("binary", "previous", "code_dir", "installer", "manager_previous", "manager_v05_previous", "updater", "qqon", "config_dir", "tls_root", "config", "transaction", "migration", "access_transaction", "backups", "unit", "data", "lock_dir", "lock")})
+                                              for name in ("binary", "previous", "code_dir", "installer", "manager_previous", "manager_v05_previous", "manager_v06_previous", "consent", "privilege_transaction", "updater", "qqon", "config_dir", "tls_root", "config", "transaction", "migration", "access_transaction", "backups", "unit", "data", "lock_dir", "lock")})
         for path in (self.paths.binary.parent, self.paths.code_dir.parent, self.paths.unit.parent, self.paths.config_dir.parent,
                      self.paths.data.parent, self.paths.lock_dir.parent, self.paths.backups.parent):
             path.mkdir(parents=True, exist_ok=True)
@@ -420,7 +424,7 @@ class InstallationTests(unittest.TestCase):
         self.assertEqual(config["binarySHA256"], selected["sha256"])
         self.assertNotEqual(config["binarySHA256"], selected["archive"]["sha256"])
         self.assertEqual(self.paths.binary.stat().st_size, selected["size"])
-        self.assertEqual(config["format"], 2)
+        self.assertEqual(config["format"], 3)
 
     def test_inner_hash_mismatch_never_executes_candidate_or_stops(self):
         self.install()
@@ -814,6 +818,8 @@ class InstallationTests(unittest.TestCase):
         old = panel.installation_config(self.paths.config.read_bytes())
         old.pop("accessMode")
         old.pop("tls")
+        old.pop("privilegeMode")
+        old.pop("privilegeConsent")
         old["format"] = 1
         self.paths.qqon.unlink()
         old["installerSHA256"] = panel.LEGACY_INSTALLER_SHA256
@@ -831,7 +837,7 @@ class InstallationTests(unittest.TestCase):
         self.runtime.confirm = self.confirm_migration
         self.run_options(["--upgrade", "--yes"])
         config = panel.installation_config(self.paths.config.read_bytes())
-        self.assertEqual(config, panel.config2(old, hashlib.sha256(SOURCE).hexdigest()))
+        self.assertEqual(config, panel.config3(old, hashlib.sha256(SOURCE).hexdigest()))
         self.assertEqual(self.paths.installer.read_bytes(), SOURCE)
         self.assertEqual(self.paths.manager_previous.read_bytes(), legacy)
         self.assertFalse(self.paths.migration.exists())
@@ -959,7 +965,7 @@ class InstallationTests(unittest.TestCase):
         self.downloads.use("0.6.0")
         output = self.run_options(["--repo", REPO, "--host", "8.8.8.8", "--yes"])
         old = panel.installation_config(self.paths.config.read_bytes())
-        self.assertEqual(old["format"], 2)
+        self.assertEqual(old["format"], 3)
         self.assertEqual(old["accessMode"], "public-selfsigned")
         self.assertEqual(old["listen"], "0.0.0.0:8443")
         self.assertEqual(old["origin"], "https://8.8.8.8:8443")
@@ -1081,7 +1087,7 @@ class InstallationTests(unittest.TestCase):
     def test_v06_v05_pinned_migration_preserves_custom_port_proxy_and_data(self):
         self.execute(external_origin="https://panel.example.com")
         old = panel.installation_config(self.paths.config.read_bytes())
-        old = {key: value for key, value in old.items() if key not in ("accessMode", "tls")}
+        old = {key: value for key, value in old.items() if key not in ("accessMode", "tls", "privilegeMode", "privilegeConsent")}
         legacy = b"synthetic pinned v05 manager"
         self.addCleanup(mock.patch.stopall)
         mock.patch.object(panel, "V05_INSTALLER_SHA256", hashlib.sha256(legacy).hexdigest()).start()
@@ -1094,7 +1100,7 @@ class InstallationTests(unittest.TestCase):
         self.runtime.confirm = self.confirm_migration
         self.events.clear()
         self.run_options(["--upgrade", "--yes"])
-        self.assertEqual(panel.installation_config(self.paths.config.read_bytes()), panel.config2(old, hashlib.sha256(SOURCE).hexdigest()))
+        self.assertEqual(panel.installation_config(self.paths.config.read_bytes()), panel.config3(old, hashlib.sha256(SOURCE).hexdigest()))
         self.assertEqual(self.paths.manager_v05_previous.read_bytes(), legacy)
         self.assertEqual(self.paths.unit.read_bytes(), original_unit)
         self.assertFalse(any(kind in ("systemctl", "download", "tls-create") for kind, _ in self.events))
@@ -1734,7 +1740,7 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(panel.WRAPPER).hexdigest(), panel.LEGACY_WRAPPER_SHA256)
         config = {"repository": REPO, "listen": panel.LISTEN, "origin": "", "healthHost": panel.LISTEN}
         self.assertEqual(panel.unit_bytes(config), panel.legacy_unit_bytes(config))
-        self.assertEqual(SOURCE.splitlines()[1], b"# QQON-Panel interactive installer protocol: 4")
+        self.assertEqual(SOURCE.splitlines()[1], b"# QQON-Panel interactive installer protocol: 5")
         self.assertEqual(panel.LEGACY_INSTALLER_SHA256, "bc78f2ec682704bb5beb965806ec56e511827f6d3451949a03d5b40db535eb91")
 
     def test_unit_preserves_deployment_sandboxing(self):

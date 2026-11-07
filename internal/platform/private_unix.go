@@ -22,6 +22,18 @@ func PreparePrivateDirectory(path string) error {
 	return os.Chmod(path, 0700)
 }
 
+// CheckPrivateDirectory inspects an existing directory without changing its mode.
+func CheckPrivateDirectory(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0077 != 0 {
+		return errors.New("platform: private directory must be real and owner-only")
+	}
+	return nil
+}
+
 // CheckPrivateFile rejects links and group/world-readable or writable secrets.
 func CheckPrivateFile(path string) error {
 	info, err := os.Lstat(path)

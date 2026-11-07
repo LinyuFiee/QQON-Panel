@@ -50,7 +50,7 @@ class EntryTests(unittest.TestCase):
         gate = text.split("[[ $first == '#!/bin/bash' ]]", 1)[1].split('\nchmod 700', 1)[0]
         gate = "[[ $first == '#!/bin/bash' ]]" + gate
         prefix = "fail() { printf '%s\\n' \"$*\"; exit 1; }; first='#!/bin/bash'; "
-        for marker, digest, success in ((4, "a" * 64, True), (3, "9af6eaf93bbdd5f622bc9bc7b37e4a6f1f218298e7a403ee2d7cfffbd8630936", True),
+        for marker, digest, success in ((5, "a" * 64, True), (4, "43c30d2985e54873193f27595acb025b992f8da33defe0814b03bcc0ac538c75", True), (4, "a" * 64, False), (3, "9af6eaf93bbdd5f622bc9bc7b37e4a6f1f218298e7a403ee2d7cfffbd8630936", True),
                                         (3, "a" * 64, False), (2, "9af6eaf93bbdd5f622bc9bc7b37e4a6f1f218298e7a403ee2d7cfffbd8630936", False)):
             result = self.run_bash(prefix + "second='# QQON-Panel interactive installer protocol: " + str(marker) + "'; actual=" + digest + ";\n" + gate)
             self.assertEqual(result.returncode == 0, success)

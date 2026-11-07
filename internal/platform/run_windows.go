@@ -12,7 +12,7 @@ import (
 	"golang.org/x/sys/windows/svc"
 )
 
-const serviceStopTimeout = 30 * time.Second
+const serviceStopTimeout = 60 * time.Second
 
 // Run must be called by main, not from a background goroutine. SCM and console
 // share the same callback; only the callback can declare its listener ready.

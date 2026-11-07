@@ -6,12 +6,14 @@ import (
 	"errors"
 	"net/http"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 )
 
-var serviceAllowlist = [...]string{"nginx", "mysql", "mariadb", "php8.3-fpm", "redis-server", "docker"}
+var serviceAllowlist = [...]string{"nginx", "mysql", "mariadb", "redis-server", "redis", "docker"}
+var phpServiceName = regexp.MustCompile(`^php(?:[0-9]{1,2}\.[0-9]{1,2})?-fpm\.service$`)
 
 const serviceOutputLimit = 16 << 10
 
@@ -87,10 +89,13 @@ func runBoundedCommand(ctx context.Context, executable string, args []string) ([
 func queryServices(ctx context.Context, executable string, run commandRunner) servicesView {
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
-	args := []string{"show", "--no-pager", "--property=Id,ActiveState", "--"}
+	args := []string{"show", "--no-pager", "--property=Id,ActiveState,LoadState", "--"}
 	for _, name := range serviceAllowlist {
 		args = append(args, name+".service")
 	}
+	// systemctl expands these fixed unit patterns; no shell or user unit name is
+	// involved. Only actually loaded PHP units are added to the cached view.
+	args = append(args, "php-fpm.service", "php[0-9]*-fpm.service")
 	data, err := run(ctx, executable, args)
 	if err != nil || len(data) > serviceOutputLimit {
 		return unknownServices("无法读取 systemd 服务状态（未运行、超时或无权限）")
@@ -101,8 +106,15 @@ func queryServices(ctx context.Context, executable string, run commandRunner) se
 		byID[name+".service"] = i
 	}
 	found := 0
-	id, state := "", ""
+	id, state, loaded := "", "", ""
 	flush := func() {
+		if loaded == "loaded" && state != "" && phpServiceName.MatchString(id) && len(view.Services) < len(serviceAllowlist)+16 {
+			if _, exists := byID[id]; !exists {
+				name := strings.TrimSuffix(id, ".service")
+				byID[id] = len(view.Services)
+				view.Services = append(view.Services, serviceEntry{ID: name, Name: name, State: "unknown"})
+			}
+		}
 		if idx, ok := byID[id]; ok && state != "" {
 			found++
 			switch state {
@@ -112,7 +124,7 @@ func queryServices(ctx context.Context, executable string, run commandRunner) se
 				view.Services[idx].State = "unknown"
 			}
 		}
-		id, state = "", ""
+		id, state, loaded = "", "", ""
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
@@ -123,6 +135,8 @@ func queryServices(ctx context.Context, executable string, run commandRunner) se
 			id = strings.TrimPrefix(line, "Id=")
 		case strings.HasPrefix(line, "ActiveState="):
 			state = strings.TrimPrefix(line, "ActiveState=")
+		case strings.HasPrefix(line, "LoadState="):
+			loaded = strings.TrimPrefix(line, "LoadState=")
 		}
 	}
 	flush()

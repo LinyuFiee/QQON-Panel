@@ -9,7 +9,11 @@ title: 一行命令开始
 
 # QQON-Panel
 
-轻量服务器面板。**[v0.6.0 已发布](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.6.0)**，选择系统，复制一条命令后按中文提示操作。
+轻量服务器面板。**[v0.6.0 预览版已发布](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.6.0)**，下面是当前已发布版本的安装入口，不是 v0.7。
+
+::: warning 版本与能力边界
+v0.4.0／v0.5.0／v0.6.0 均为预览版，没有真实业务软件安装或网站创建／部署能力，不代表稳定成熟或全平台实机验收。**v0.7 预览开发中，尚未发布，测试尚无最终结论**；最高权限授权、Linux 软件／网站／任务及其限制见 [托管开发指南](./guide/hosting)。
+:::
 
 ## Linux
 

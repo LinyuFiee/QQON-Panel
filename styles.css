@@ -426,6 +426,48 @@ main:focus, #gate-content:focus { outline: none; }
 .recovery-codes { font-size: 14px; line-height: 2; letter-spacing: .7px; }
 .log-preview { white-space: pre; word-break: normal; overflow-wrap: normal; }
 
+/* Native hosting cards and finite jobs share the existing palette and controls. */
+.section-toolbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 18px 20px 8px; }
+.section-toolbar h2 { margin: 0; }
+.section-toolbar .panel-subtitle { margin-bottom: 6px; }
+.section-card > .section-toolbar { padding: 0 0 8px; }
+.hosting-intro .body-copy { margin-bottom: 8px; }
+.management-notice > div { min-width: 0; }
+.management-notice strong { font-weight: 600; }
+.management-notice span { display: block; margin-top: 6px; }
+.apps-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 20px; }
+.app-card { display: flex; flex-direction: column; padding: 19px; min-width: 0; }
+.app-card-heading { display: flex; align-items: center; gap: 11px; margin-bottom: 15px; }
+.app-card-heading > div { min-width: 0; }
+.app-card-heading h2 { margin: 0 0 1px; font-size: 16px; }
+.app-card-heading .mono { font-size: 11px; }
+.app-card-heading > .status-pill { margin-left: auto; }
+.app-symbol { display: grid; place-items: center; flex: 0 0 36px; height: 36px; border: 1px solid #dce9df; border-radius: 9px; background: var(--green-soft); color: var(--green); }
+.app-card .body-copy { min-height: 42px; margin-bottom: 8px; }
+.app-card .fact-row { padding: 7px 0; }
+.app-service-state { margin: 10px 0 16px; }
+.app-card .form-actions { margin-top: auto; }
+.hosting-task-panel, .sites-panel, .site-files-panel { margin-bottom: 20px; overflow: hidden; }
+.hosting-task-panel .data-table td, .sites-panel .data-table td { padding-top: 12px; padding-bottom: 12px; }
+.site-actions { max-width: 255px; min-width: 196px; }
+.site-files-panel { scroll-margin-top: 20px; }
+.job-progress { display: flex; align-items: center; gap: 9px; min-width: 135px; }
+.job-progress progress { flex: 1; width: 96px; min-width: 75px; height: 7px; accent-color: var(--green); border: 0; border-radius: 20px; background: var(--line); overflow: hidden; }
+.job-progress progress::-webkit-progress-bar { background: var(--line); }
+.job-progress progress::-webkit-progress-value { background: var(--green); border-radius: 20px; }
+.job-progress progress::-moz-progress-bar { background: var(--green); border-radius: 20px; }
+.job-progress span { min-width: 35px; color: var(--secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
+.job-detail { scroll-margin-top: 20px; }
+.job-detail-state { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; margin: 16px 0; }
+.job-detail-state .job-progress { max-width: 360px; flex: 1; }
+.job-detail-state > small { color: var(--muted); }
+.job-detail .log-preview { max-height: 420px; }
+.field .code-editor { font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace; font-size: 12px; line-height: 1.65; tab-size: 4; resize: vertical; min-height: 125px; max-height: 55dvh; }
+.field textarea:focus { border-color: #79a68b; }
+.operation-confirm { margin: 0; padding: 12px 14px; border: 1px solid #e9dfc8; border-radius: 8px; background: #fbf7ed; color: #806328; }
+.operation-confirm input { flex: 0 0 auto; }
+#management-status:empty, #hosting-jobs:empty, #site-files:empty, #job-detail:empty { display: none; }
+
 body[data-density="compact"] .section-card { padding: 17px; }
 body[data-density="compact"] .data-table td { padding-top: 9px; padding-bottom: 9px; }
 body[data-density="compact"] .metric-card { padding-top: 14px; padding-bottom: 13px; }
@@ -473,7 +515,11 @@ body[data-density="compact"] .form-stack { gap: 12px; }
   .page-heading p { font-size: 11px; }
   .app-footer { padding: 18px 20px; font-size: 10px; }
   .account-link #account-username { max-width: 105px; }
+  .apps-grid { grid-template-columns: 1fr; }
+  .section-toolbar { flex-wrap: wrap; gap: 8px; }
+  .page-heading > .page-actions { flex-wrap: wrap; }
   .data-table { min-width: 500px; }
+  .sites-panel .data-table, .hosting-task-panel .data-table { min-width: 720px; }
   #docker-resource-panel .data-table { min-width: 650px; }
 }
 @media (max-width: 480px) {

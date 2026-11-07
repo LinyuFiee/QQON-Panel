@@ -1,0 +1,108 @@
+name: Hosting preview acceptance
+
+on:
+  push:
+    branches:
+      - feature/authorized-management-sites
+    paths:
+      - '**.go'
+      - go.mod
+      - go.sum
+      - scripts/**
+      - tools/**
+      - app.js
+      - api.js
+      - index.html
+      - styles.css
+      - .github/workflows/hosting-preview.yml
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: hosting-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          submodules: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: stable
+          cache: false
+          check-latest: true
+      - name: Unit tests and race detector
+        env:
+          GOTOOLCHAIN: local
+        run: |
+          set -euo pipefail
+          python3 -I -m unittest discover -s scripts/tests -p 'test_*.py' -q
+          python3 -I -m unittest discover -s tools/tests -p 'test_*.py' -q
+          bash -n scripts/install.sh
+          bash -n scripts/bootstrap.sh
+          go test ./...
+          go vet ./...
+          CGO_ENABLED=1 go test -race ./...
+      - name: Build this checkout for the disposable host
+        env:
+          BUILD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          go build -trimpath -ldflags "-s -w -X main.commit=$BUILD_SHA -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o "$RUNNER_TEMP/qqon-hosting-ci" .
+      - name: Real package installation and static proxy PHP websites
+        env:
+          ACCEPTANCE_BINARY: ${{ runner.temp }}/qqon-hosting-ci
+          ACCEPTANCE_REPORT: ${{ runner.temp }}/qqon-hosting-report.json
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          sudo env QQON_REAL_HOST_TEST=ephemeral-ubuntu-24.04 GITHUB_ACTIONS=true RUNNER_ENVIRONMENT=github-hosted RUNNER_OS=Linux \
+            python3 -I tools/hosting_acceptance.py --binary "$ACCEPTANCE_BINARY" --report "$ACCEPTANCE_REPORT"
+      - name: Publish non-secret acceptance summary
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: hosting-preview-acceptance
+          path: ${{ runner.temp }}/qqon-hosting-report.json
+          if-no-files-found: error
+          retention-days: 7
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          submodules: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: stable
+          cache: false
+          check-latest: true
+      - name: Go and isolated PowerShell regressions
+        env:
+          BUILD_SHA: ${{ github.sha }}
+          GOTOOLCHAIN: local
+        run: |
+          set -euo pipefail
+          go test ./...
+          go vet ./...
+          powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/windows-tests/test_install.ps1
+          go build -trimpath -ldflags "-X main.commit=$BUILD_SHA -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o "$RUNNER_TEMP/qqon-maintenance-test.exe" .
+          powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/windows-tests/test_maintenance.ps1 -PanelBinary "$RUNNER_TEMP/qqon-maintenance-test.exe"

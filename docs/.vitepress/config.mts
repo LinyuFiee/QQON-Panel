@@ -3,7 +3,7 @@ import { defineConfig } from 'vitepress'
 export default defineConfig({
   lang: 'zh-CN',
   title: 'QQON-Panel',
-  description: 'QQON-Panel 中文文档：安装、支持范围、安全与升级边界。',
+  description: 'QQON-Panel 预览版中文文档：v0.6 安装与安全边界、v0.7 未发布托管开发指南。',
   base: '/QQON-Panel/',
   appearance: true,
   ignoreDeadLinks: false,
@@ -23,7 +23,7 @@ export default defineConfig({
     nav: [
       { text: '开始使用', link: '/guide/quickstart', activeMatch: '/guide/(quickstart|installation|legacy-v0-4)' },
       { text: '支持范围', link: '/guide/support-matrix' },
-      { text: '运维指南', link: '/guide/security', activeMatch: '/guide/(security|windows-services|maintenance|public-https|upgrade-migration|troubleshooting)' },
+      { text: '运维指南', link: '/guide/security', activeMatch: '/guide/(security|windows-services|maintenance|public-https|hosting|upgrade-migration|troubleshooting)' },
       { text: '发布状态', link: '/guide/releases' },
       { text: 'GitHub', link: 'https://github.com/LinyuFiee/QQON-Panel' }
     ],
@@ -33,8 +33,8 @@ export default defineConfig({
         items: [
           { text: '快速开始', link: '/guide/quickstart' },
           { text: '支持矩阵与验证状态', link: '/guide/support-matrix' },
-          { text: '已发布安装（v0.6.0）', link: '/guide/installation' },
-          { text: '旧版 v0.4.0 安装', link: '/guide/legacy-v0-4' }
+          { text: '已发布预览版安装（v0.6.0）', link: '/guide/installation' },
+          { text: '旧预览版 v0.4.0 安装', link: '/guide/legacy-v0-4' }
         ]
       },
       {
@@ -44,6 +44,7 @@ export default defineConfig({
           { text: 'Windows 服务', link: '/guide/windows-services' },
           { text: 'qqon 维护', link: '/guide/maintenance' },
           { text: '公网 IP HTTPS', link: '/guide/public-https' },
+          { text: 'v0.7 托管预览（开发中）', link: '/guide/hosting' },
           { text: '升级与迁移', link: '/guide/upgrade-migration' },
           { text: '故障排查', link: '/guide/troubleshooting' }
         ]

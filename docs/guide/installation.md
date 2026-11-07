@@ -1,6 +1,8 @@
 # 安装说明
 
-**[v0.6.0 已发布](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.6.0)**，提供 Linux APT/DNF 与 Windows x64 中文安装、四种访问模式及 `qqon` 维护。直接开始见 [一键命令](./quickstart#next-release)；旧版见 [v0.4.0 指南](./legacy-v0-4) 与 [v0.5.0 说明](./releases#下一版本-v0-5-待发布)。
+**[v0.6.0 预览版已发布](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.6.0)**，提供 Linux APT/DNF 与 Windows x64 中文安装、四种访问模式及 `qqon` 维护。直接开始见 [一键命令](./quickstart#next-release)；旧版见 [v0.4.0 指南](./legacy-v0-4) 与 [v0.5.0 说明](./releases#下一版本-v0-5-待发布)。
+
+本页是**当前 v0.6.0 下载**的安装说明。v0.4.0／v0.5.0／v0.6.0 均为预览定位，没有真实业务软件安装和建站能力。v0.7 的 root／LocalSystem 授权与 Linux 托管尚在开发、未发布、测试未定，另见 [托管开发指南](./hosting)；不要给当前下载附加 v0.7 专属参数。
 
 Linux/Windows CI（含 Windows 新增 maintenance 测试）已通过，但不等于具体系统版本安装、真实 SCM、SELinux 或物理故障恢复已验收，详见 [支持矩阵](./support-matrix)。
 
@@ -12,7 +14,7 @@ Linux/Windows CI（含 Windows 新增 maintenance 测试）已通过，但不等
 - `install.ps1` 来自仓库 `scripts/bootstrap.ps1`。
 - 文档构建时按字节复制；源文件不存在会让构建失败，不生成占位可执行文件。
 
-入口固定面向 `LinyuFiee/QQON-Panel` 的正式 Release，必须拒绝旧的、不兼容的发布格式。不从可变镜像、用户传入的任意 URL 或 `main` 源码悄悄替换生产安装器。
+入口固定面向 `LinyuFiee/QQON-Panel` 的官方已发布 Release，必须拒绝旧的、不兼容的发布格式。官方来源不等于成熟稳定；不从可变镜像、用户传入的任意 URL 或 `main` 源码悄悄替换已发布安装器。
 
 **管道命令会直接执行下载内容。** GitHub Pages、项目仓库及其发布权限都是信任边界；SHA-256 校验只能证明文件与清单一致，不能提供独立发布者签名。更谨慎的做法是下载到新的空目录，审阅后执行本地文件，并先确认 [发布状态](./releases)。
 
@@ -114,7 +116,7 @@ ssh -L 5173:127.0.0.1:5173 your-user@your-server
 
 ## 无人值守与状态
 
-无人值守仅使用**已发布且审阅过的安装器帮助**中的明确参数，不混用 v0.4/v0.5/v0.6 的参数与配置。`--yes` / `-Yes` 不代表自动批准旧管理器迁移或绕过公网地址确认、安全校验。
+无人值守仅使用**已发布且审阅过的安装器帮助**中的明确参数，不混用 v0.4/v0.5/v0.6 的参数与配置。`--yes` / `-Yes` 不代表自动批准旧管理器迁移或绕过公网地址确认、安全校验，也**不构成 v0.7 的最高系统管理权限同意**；`qqon update` 同样不授权。
 
 没有交互终端的管道不会从网络输入流读答案。安装后的 `qqon status`、`qqon url` 只读，不安装依赖、迁移记录、恢复事务、改权限或编辑服务；其他维护能力见 [qqon 维护](./maintenance)。
 

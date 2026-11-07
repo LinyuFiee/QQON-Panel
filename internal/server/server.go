@@ -97,7 +97,7 @@ func Guard(next http.Handler, options Options) (http.Handler, error) {
 			return
 		}
 		if r.Body != nil {
-			r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+			r.Body = http.MaxBytesReader(w, r.Body, requestBodyLimit(r))
 		}
 		next.ServeHTTP(w, r)
 	}), nil

@@ -18,11 +18,12 @@
   ]);
 
   // Session cookies are HttpOnly. Only the CSRF token lives in this page's memory.
-  async function request(path, { method = "GET", body, signal } = {}) {
+  async function request(path, { method = "GET", body, signal, binary = false } = {}) {
     const mutation = method !== "GET";
     const headers = { Accept: "application/json" };
     if (mutation) {
-      headers["Content-Type"] = "application/json";
+      headers["Content-Type"] = binary ? "application/octet-stream" : "application/json";
+      if (binary) headers["X-Confirm-Operation"] = "true";
       if (!publicPaths.has(path)) {
         if (!csrfToken) {
           throw new APIError("会话校验信息缺失，请重新登录。", "csrf_missing", 403);
@@ -45,7 +46,7 @@
       const response = await fetch(path, {
         method,
         headers,
-        body: mutation ? JSON.stringify(body ?? {}) : undefined,
+        body: mutation ? (binary ? body : JSON.stringify(body ?? {})) : undefined,
         credentials: "same-origin",
         mode: "same-origin",
         cache: "no-store",
@@ -136,6 +137,30 @@
     checkUpdate: (signal) => write("/api/update/check", "POST", {}, signal),
     files: (path, offset, signal) => get(`/api/files?${new URLSearchParams({ path, offset: String(offset) })}`, signal),
     previewFile: (path, signal) => get(`/api/files/preview?${new URLSearchParams({ path })}`, signal),
+
+    management: (signal) => get("/api/management", signal),
+    apps: (signal) => get("/api/apps", signal),
+    appAction: (id, action, signal) => {
+      if (!["nginx", "php-fpm", "mariadb", "redis"].includes(id) || !["install", "start", "stop", "restart"].includes(action)) {
+        return Promise.reject(new APIError("未知的软件或操作。", "invalid_app_action"));
+      }
+      return write(`/api/apps/${part(id)}/${action}`, "POST", { confirmed: true }, signal);
+    },
+    jobs: (signal) => get("/api/jobs", signal),
+    job: (id, signal) => get(`/api/jobs/${part(id)}`, signal),
+    sites: (signal) => get("/api/sites", signal),
+    site: (id, signal) => get(`/api/sites/${part(id)}`, signal),
+    createSite: (site, signal) => write("/api/sites", "POST", { confirmed: true, site }, signal),
+    updateSite: (id, revision, site, signal) => write(`/api/sites/${part(id)}`, "PATCH", { confirmed: true, revision, site }, signal),
+    deleteSite: (id, revision, signal) => write(`/api/sites/${part(id)}`, "DELETE", { confirmed: true, revision }, signal),
+    siteTLS: (id, revision, certificate, privateKey, signal) => write(`/api/sites/${part(id)}/tls`, "POST", { confirmed: true, revision, certificate, privateKey }, signal),
+    siteFiles: (id, path, offset, signal) => get(`/api/sites/${part(id)}/files?${new URLSearchParams({ path, offset: String(offset) })}`, signal),
+    siteContent: (id, path, signal) => get(`/api/sites/${part(id)}/content?${new URLSearchParams({ path })}`, signal),
+    saveSiteContent: (id, path, content, sha256, signal) => write(`/api/sites/${part(id)}/content`, "PUT", { confirmed: true, path, content, sha256 }, signal),
+    uploadSiteFile: (id, path, file, signal) => {
+      if (!(file instanceof Blob) || file.size > 2097152) return Promise.reject(new APIError("单文件上传不得超过 2 MiB。", "upload_too_large"));
+      return request(`/api/sites/${part(id)}/upload?${new URLSearchParams({ path })}`, { method: "POST", body: file, signal, binary: true });
+    },
 
     sources: (signal) => get("/api/sources", signal),
     saveSources: (revision, config, signal) => write("/api/sources", "PUT", { revision, config }, signal),
