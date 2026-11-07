@@ -65,6 +65,13 @@ func newService(options Options, adapters hostAdapters) (*Service, error) {
 	if s.adapters.verifyRemoved == nil {
 		s.adapters.verifyRemoved = s.verifyRemovedHTTP
 	}
+	// Restricted monitoring must start without opening root-managed site state.
+	// The installer restarts after consent/identity migration; until that restart,
+	// newly granted permission cannot operate on a stale, unloaded site registry.
+	if err := s.permission(); err != nil {
+		s.blocked = "启动时未获得网站管理权限；请通过本机维护命令授权并重启面板后加载网站记录"
+		return s, nil
+	}
 	if err := s.load(); err != nil {
 		cancel()
 		return nil, err

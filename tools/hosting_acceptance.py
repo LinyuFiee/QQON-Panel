@@ -185,6 +185,9 @@ class Acceptance:
         consent_file.write_text(json.dumps(record), encoding="utf-8")
         consent_file.chmod(0o644)
         assert self.expect("GET", "/api/management")["authorized"]
+        self.stop()
+        self.start()
+        self.login()
         self.expect("POST", "/api/apps/nginx/install", {"confirmed": True}, csrf=False, code=403)
         self.expect("POST", "/api/apps/nginx/install", {"confirmed": True}, headers={"Origin": "https://untrusted.example"}, code=403)
         self.report["checks"]["csrfAndCrossOriginRejected"] = True
