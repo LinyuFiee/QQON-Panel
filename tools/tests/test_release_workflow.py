@@ -89,7 +89,9 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("runs-on: windows-latest", windows)
         self.assertIn("contents: read", windows)
         for command in ("go test ./...", "go vet ./...", "python -I -m unittest discover -s tools/tests",
-                        "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/windows-tests/test_install.ps1"):
+                        "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/windows-tests/test_install.ps1",
+                        "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/windows-tests/test_maintenance.ps1 -PanelBinary",
+                        "-X main.commit=$RELEASE_COMMIT -X main.buildTime=$RELEASE_BUILD_TIME"):
             self.assertIn(command, windows)
         self.assertNotIn("go test -race", windows)
         self.assertIn("go test -race", linux)

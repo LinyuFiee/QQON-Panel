@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -24,8 +25,10 @@ import (
 	"panel/internal/lock"
 	"panel/internal/machine"
 	"panel/internal/platform"
+	"panel/internal/runlog"
 	"panel/internal/server"
 	"panel/internal/sources"
+	"panel/internal/tlsutil"
 	"panel/internal/update"
 )
 
@@ -33,7 +36,7 @@ import (
 var assets embed.FS
 
 var (
-	version          = "0.5.0"
+	version          = "0.6.0"
 	commit           = "unknown"
 	buildTime        = "unknown"
 	githubRepository = "LinyuFiee/QQON-Panel"
@@ -46,27 +49,58 @@ func main() {
 	}
 }
 
-func run(parent context.Context, ready func()) error {
+func run(parent context.Context, ready func()) (runErr error) {
 	defaultData := ""
 	if userConfig, err := os.UserConfigDir(); err == nil {
 		defaultData = filepath.Join(userConfig, "server-panel")
 	}
-	listen := flag.String("listen", "127.0.0.1:5173", "listen address; non-loopback requires direct TLS")
-	dataDir := flag.String("data-dir", defaultData, "private account/configuration directory")
-	fileRoot := flag.String("file-root", "", "explicit read-only file root, blank disables browsing")
-	dockerSocket := flag.String("docker-socket", "", "explicit local Docker Unix socket, blank disables Docker")
-	allowWrites := flag.Bool("allow-docker-writes", false, "enable confirmed container start/stop/restart")
-	origin := flag.String("origin", "", "single external origin, for example https://panel.example.com")
-	certPath := flag.String("tls-cert", "", "TLS certificate path")
-	keyPath := flag.String("tls-key", "", "TLS private key path")
-	memoryMiB := flag.Int64("memory-budget-mib", 64, "Go soft managed-memory limit, not an RSS hard limit")
-	connections := flag.Int("max-connections", 64, "maximum accepted TCP connections (8–256)")
-	requests := flag.Int("max-requests", 24, "maximum concurrent HTTP requests (4–128)")
-	printVersion := flag.Bool("version", false, "print version and exit")
-	printBuild := flag.Bool("build-info", false, "print JSON release identity and exit without starting services")
-	repository := flag.String("github-repo", githubRepository, "public GitHub owner/repo used only for manual update checks")
+	listen := flag.String("listen", "127.0.0.1:5173", "监听地址；非本机地址必须启用直接 HTTPS")
+	dataDir := flag.String("data-dir", defaultData, "账号与配置的私有数据目录")
+	fileRoot := flag.String("file-root", "", "显式授权的只读文件根目录；留空禁用浏览")
+	dockerSocket := flag.String("docker-socket", "", "显式指定的本机 Docker Unix socket；留空禁用")
+	allowWrites := flag.Bool("allow-docker-writes", false, "启用经确认的容器启动、停止和重启")
+	origin := flag.String("origin", "", "唯一允许的访问来源，例如 https://panel.example.com")
+	certPath := flag.String("tls-cert", "", "TLS 证书 PEM 文件路径")
+	keyPath := flag.String("tls-key", "", "TLS 私钥 PEM 文件路径")
+	createTLS := flag.Bool("tls-create", false, "生成自签证书后退出，不启动面板")
+	inspectTLS := flag.Bool("tls-inspect", false, "校验证书、私钥与访问主机后退出")
+	tlsHost := flag.String("tls-host", "", "证书对应的 IP 地址或域名（不含协议、端口）")
+	tlsOutput := flag.String("tls-output", "", "全新的证书输出目录，不覆盖已有文件")
+	tlsDays := flag.Int("tls-days", 365, "自签证书有效天数（1–397）")
+	runtimeLogs := flag.Bool("runtime-log", runtime.GOOS == "windows", "在私有数据目录保存限量轮转运行日志")
+	memoryMiB := flag.Int64("memory-budget-mib", 64, "Go 管理内存软限制 MiB，不等于 RSS 硬上限")
+	connections := flag.Int("max-connections", 64, "最大已接受 TCP 连接数（8–256）")
+	requests := flag.Int("max-requests", 24, "最大并发 HTTP 请求数（4–128）")
+	printVersion := flag.Bool("version", false, "输出版本后退出")
+	printBuild := flag.Bool("build-info", false, "输出 JSON 构建信息后退出，不启动服务")
+	repository := flag.String("github-repo", githubRepository, "用于手动更新检查的公开 GitHub owner/repo")
 	flag.Parse()
 	build := buildinfo.Current(version, commit, buildTime, githubRepository)
+	if *createTLS || *inspectTLS {
+		if *createTLS == *inspectTLS || *printBuild || *printVersion {
+			return errors.New("证书操作不能同时执行或与版本查询混用")
+		}
+		var info tlsutil.Info
+		var err error
+		if *createTLS {
+			if *tlsOutput == "" || *tlsHost == "" || *certPath != "" || *keyPath != "" {
+				return errors.New("生成证书需指定 -tls-host 和 -tls-output，不能同时指定已有证书文件")
+			}
+			info, err = tlsutil.Create(*tlsOutput, *tlsHost, *tlsDays)
+		} else {
+			if *tlsOutput != "" || *tlsHost == "" || *certPath == "" || *keyPath == "" {
+				return errors.New("检查证书需指定 -tls-host、-tls-cert 与 -tls-key")
+			}
+			info, err = tlsutil.Inspect(*certPath, *keyPath, *tlsHost)
+		}
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(info)
+	}
+	if *tlsOutput != "" || *tlsHost != "" {
+		return errors.New("-tls-output 和 -tls-host 仅用于 -tls-create 或 -tls-inspect")
+	}
 	if *printBuild {
 		return json.NewEncoder(os.Stdout).Encode(build)
 	}
@@ -75,10 +109,10 @@ func run(parent context.Context, ready func()) error {
 		return nil
 	}
 	if *dataDir == "" {
-		return errors.New("no default user configuration directory; supply an explicit -data-dir")
+		return errors.New("没有默认用户配置目录，请显式指定 -data-dir")
 	}
 	if _, err := update.ParseVersion(version); err != nil {
-		return fmt.Errorf("invalid build version: %w", err)
+		return fmt.Errorf("构建版本无效：%w", err)
 	}
 	if *repository != "" {
 		if err := update.ValidateRepository(*repository); err != nil {
@@ -86,27 +120,27 @@ func run(parent context.Context, ready func()) error {
 		}
 	}
 	if *memoryMiB < 32 || *memoryMiB > 512 || *connections < 8 || *connections > 256 || *requests < 4 || *requests > 128 {
-		return errors.New("invalid resource limits: memory 32–512 MiB, connections 8–256, requests 4–128")
+		return errors.New("资源限额无效：内存须为 32–512 MiB，连接数 8–256，请求数 4–128")
 	}
 	debug.SetMemoryLimit(*memoryMiB << 20)
 	if (*certPath == "") != (*keyPath == "") {
-		return errors.New("tls-cert and tls-key must be supplied together")
+		return errors.New("必须同时提供 -tls-cert 和 -tls-key")
 	}
 	if *allowWrites && *dockerSocket == "" {
-		return errors.New("allow-docker-writes requires an explicit docker-socket")
+		return errors.New("启用 Docker 写操作前须显式指定 -docker-socket")
 	}
 	if *dockerSocket != "" && !filepath.IsAbs(*dockerSocket) {
-		return errors.New("docker-socket must be an absolute local path")
+		return errors.New("Docker socket 必须使用本机绝对路径")
 	}
 	host, port, err := net.SplitHostPort(*listen)
 	if err != nil {
-		return fmt.Errorf("invalid listen address: %w", err)
+		return fmt.Errorf("监听地址无效：%w", err)
 	}
 	ip := net.ParseIP(host)
 	loopback := ip != nil && ip.IsLoopback()
 	directTLS := *certPath != ""
 	if !loopback && !directTLS {
-		return errors.New("non-loopback listener requires TLS; bind 127.0.0.1 behind an HTTPS reverse proxy instead")
+		return errors.New("非本机监听必须启用 TLS；如使用 HTTPS 代理，请让面板监听 127.0.0.1")
 	}
 	origins := []string{}
 	secure := directTLS
@@ -118,7 +152,7 @@ func run(parent context.Context, ready func()) error {
 		u, _ := url.Parse(normalized)
 		secure = u.Scheme == "https"
 		if directTLS && !secure || !loopback && !secure {
-			return errors.New("public or TLS listener requires an HTTPS origin")
+			return errors.New("公网或 TLS 监听必须配置 HTTPS 来源地址")
 		}
 		if !secure {
 			originIP := net.ParseIP(u.Hostname())
@@ -127,13 +161,13 @@ func run(parent context.Context, ready func()) error {
 				originPort = "80"
 			}
 			if originIP == nil || !originIP.IsLoopback() || !loopback || originPort != port {
-				return errors.New("HTTP origins are allowed only for the local loopback listener")
+				return errors.New("HTTP 来源地址仅允许本机回环访问")
 			}
 		}
 		origins = append(origins, normalized)
 	} else {
 		if !loopback {
-			return errors.New("non-loopback listener requires explicit -origin https://your-panel-host")
+			return errors.New("非本机监听须显式配置 -origin https://面板IP或域名:端口")
 		}
 		scheme := "http"
 		if directTLS {
@@ -142,17 +176,28 @@ func run(parent context.Context, ready func()) error {
 		origins = append(origins, scheme+"://"+net.JoinHostPort(host, port), scheme+"://"+net.JoinHostPort("localhost", port))
 	}
 
+	if directTLS {
+		certificateHost := host
+		if *origin != "" {
+			parsed, _ := url.Parse(origins[0])
+			certificateHost = parsed.Hostname()
+		}
+		if _, err := tlsutil.Inspect(*certPath, *keyPath, certificateHost); err != nil {
+			return fmt.Errorf("HTTPS 证书与访问地址不匹配或不可用：%w", err)
+		}
+	}
+
 	absoluteData, err := filepath.Abs(*dataDir)
 	if err != nil {
 		return err
 	}
 	if err := platform.PreparePrivateDirectory(absoluteData); err != nil {
-		return fmt.Errorf("prepare private data directory: %w", err)
+		return fmt.Errorf("无法准备私有数据目录：%w", err)
 	}
 	if *fileRoot != "" {
 		root, err := filepath.EvalSymlinks(*fileRoot)
 		if err != nil {
-			return fmt.Errorf("resolve file root: %w", err)
+			return fmt.Errorf("无法解析文件浏览根目录：%w", err)
 		}
 		root, err = filepath.Abs(root)
 		if err != nil {
@@ -164,7 +209,7 @@ func run(parent context.Context, ready func()) error {
 		}
 		relative, err := filepath.Rel(root, realData)
 		if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-			return errors.New("file-root must not contain the panel's private data directory")
+			return errors.New("文件浏览根目录不能包含面板私有数据")
 		}
 		*fileRoot = root
 	}
@@ -173,15 +218,30 @@ func run(parent context.Context, ready func()) error {
 		return err
 	}
 	defer unlock()
+	if *runtimeLogs {
+		writer, err := runlog.Open(filepath.Join(absoluteData, "logs"))
+		if err != nil {
+			return fmt.Errorf("无法初始化受保护的运行日志：%w", err)
+		}
+		previous := log.Writer()
+		log.SetOutput(io.MultiWriter(writer, previous))
+		defer func() {
+			if runErr != nil {
+				log.Printf("面板运行结束：%v", runErr)
+			}
+			log.SetOutput(previous)
+			_ = writer.Close()
+		}()
+	}
 
 	authService, err := auth.New(auth.Options{DataDir: absoluteData, SecureCookies: secure, SessionTTL: 12 * time.Hour})
 	if err != nil {
-		return fmt.Errorf("initialize authentication: %w", err)
+		return fmt.Errorf("身份验证模块初始化失败：%w", err)
 	}
 	defer authService.Close()
 	machineService, err := machine.New(machine.Options{FileRoot: *fileRoot, DockerSocket: *dockerSocket, AllowDockerWrites: *allowWrites})
 	if err != nil {
-		return fmt.Errorf("initialize machine adapters: %w", err)
+		return fmt.Errorf("系统适配初始化失败：%w", err)
 	}
 	defer machineService.Close()
 	machineService.SetAudit(authService.Record)
@@ -216,11 +276,12 @@ func run(parent context.Context, ready func()) error {
 	}
 	listener, err := net.Listen("tcp", *listen)
 	if err != nil {
-		return fmt.Errorf("listen: %w", err)
+		return fmt.Errorf("监听失败，请检查地址、端口或占用情况：%w", err)
 	}
 	listener = server.LimitListener(listener, *connections)
 	defer listener.Close()
 	httpServer := server.HTTPServer(*listen, handler)
+	httpServer.ErrorLog = log.New(safeHTTPErrorWriter{output: log.Writer()}, "HTTP: ", log.LstdFlags)
 	// HTTP/1.1 keeps the connection/request budget explicit for this small panel.
 	httpServer.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}}
 	httpServer.TLSNextProto = map[string]func(*http.Server, *tls.Conn, http.Handler){}
@@ -236,15 +297,15 @@ func run(parent context.Context, ready func()) error {
 			_ = httpServer.Close()
 		}
 	}()
-	log.Printf("server-panel %s listening at %s; managed memory soft limit %d MiB", version, origins[0], *memoryMiB)
+	log.Printf("QQON-Panel %s 已监听 %s；Go 管理内存软限制 %d MiB", version, origins[0], *memoryMiB)
 	if tokenPath := authService.SetupTokenPath(); tokenPath != "" {
-		log.Printf("first-time setup required; read the private bootstrap token locally from: %s", tokenPath)
+		log.Printf("首次使用需初始化管理员；请在本机读取私有令牌文件：%s", tokenPath)
 	}
 	if runtime.GOOS != "linux" {
-		log.Print("Linux systemd service queries and Docker Unix sockets are unavailable on this platform")
+		log.Print("当前平台不提供 Linux systemd 服务查询与 Docker Unix socket 功能")
 	}
 	if *dockerSocket != "" {
-		log.Printf("Docker socket explicitly configured; writes enabled: %t (socket grants host-level authority)", *allowWrites)
+		log.Printf("已显式配置 Docker socket；写操作启用：%t（此接口具有较高主机权限）", *allowWrites)
 	}
 	if ready != nil {
 		ready()
@@ -260,6 +321,17 @@ func run(parent context.Context, ready func()) error {
 		return nil
 	}
 	return err
+}
+
+type safeHTTPErrorWriter struct{ output io.Writer }
+
+func (w safeHTTPErrorWriter) Write(message []byte) (int, error) {
+	// net/http errors may include panic values or attacker-controlled input.
+	_, err := io.WriteString(w.output, "HTTP：连接处理失败，原始错误已省略以避免泄露请求内容。\n")
+	if err != nil {
+		return 0, err
+	}
+	return len(message), nil
 }
 
 func healthHandler(build buildinfo.Info) http.HandlerFunc {

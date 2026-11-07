@@ -5,6 +5,8 @@
 [文档](https://linyufiee.github.io/QQON-Panel/) · [下载](https://github.com/LinyuFiee/QQON-Panel/releases/latest) · [发布指南](RELEASING.md)
 
 > **[v0.5.0 正式版](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.5.0) 已发布**：交互一键安装、APT/DNF 适配和 Windows x64 原生产物。选择系统，执行下方命令后按终端提示操作。
+>
+> **v0.6 开发中**：中文安装、默认公网 IP＋HTTPS、自签证书管理及统一 `qqon` 维护。当前已发布 v0.5 仍只配置本机／HTTPS 代理，不会凭空获得公网入口；新增能力须等待下一 Release。详见[公网 HTTPS](https://linyufiee.github.io/QQON-Panel/guide/public-https)与[维护命令](https://linyufiee.github.io/QQON-Panel/guide/maintenance)。
 
 ## 一键交互安装 · v0.5.0
 

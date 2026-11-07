@@ -26,7 +26,7 @@ def definition(name):
 
 PURE = "\n".join(definition(name) for name in (
     "bootstrap_fail", "bootstrap_help", "bootstrap_repo", "bootstrap_version", "bootstrap_origin", "bootstrap_port", "bootstrap_menu",
-    "bootstrap_arguments", "bootstrap_os_release", "bootstrap_missing", "bootstrap_confirm", "bootstrap"))
+    "bootstrap_arguments", "bootstrap_manage_arguments", "bootstrap_os_release", "bootstrap_missing", "bootstrap_confirm", "bootstrap"))
 FAKES = r'''
 PYTHON_READY=1
 CA_FILE=1
@@ -112,7 +112,7 @@ class BootstrapTests(unittest.TestCase):
             with self.subTest(args=args):
                 result = self.run_bootstrap("PYTHON_READY=0", args)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIn("Usage:", result.stdout)
+                self.assertIn("用法", result.stdout)
                 for event in ("root-check", "system-check", "source-check", "fake-apt", "reached-python"):
                     self.assertNotIn(event, result.stdout)
 
@@ -143,7 +143,7 @@ class BootstrapTests(unittest.TestCase):
         root = definition("bootstrap_root").replace("EUID == 0", "1001 == 0")
         result = self.run_bootstrap("PYTHON_READY=0", extra=root)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("requires root", result.stderr)
+        self.assertIn("需要 root", result.stderr)
         self.assertNotIn("system-check", result.stdout)
         self.assert_no_apt(result)
 
@@ -236,16 +236,16 @@ class BootstrapTests(unittest.TestCase):
             with self.subTest(answer=answer):
                 result = self.run_bootstrap("PYTHON_READY=0; REPLY_VALUE=" + answer, args)
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn("Cancelled", result.stderr)
+                self.assertIn("已取消", result.stderr)
                 self.assert_no_apt(result)
         result = self.run_bootstrap("PYTHON_READY=0; REPLY_FAIL=1", args)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("No controlling terminal", result.stderr)
+        self.assertIn("没有控制终端", result.stderr)
         self.assert_no_apt(result)
 
     def test_failed_apt_or_postcheck_never_reaches_python_management(self):
         for setup, message in (("PYTHON_READY=0; APT_FAIL=1", "Injected dependency installation failure"),
-                               ("PYTHON_READY=0; APT_NO_EFFECT=1", "remains unavailable")):
+                               ("PYTHON_READY=0; APT_NO_EFFECT=1", "依赖安装后仍不可用")):
             with self.subTest(setup=setup):
                 result = self.run_bootstrap(setup)
                 self.assertNotEqual(result.returncode, 0)
@@ -273,7 +273,7 @@ class BootstrapTests(unittest.TestCase):
             self.assertNotIn(forbidden, apt)
 
     def test_menu_install_port_proxy_reprompts_and_forwards_arguments(self):
-        setup = 'MENU_ANSWERS=(9 1 80 6217 9 2 http://bad https://panel.example.com)\n'
+        setup = 'MENU_ANSWERS=(9 1 9 3 80 6217 http://bad https://panel.example.com)\n'
         result = self.run_shell(setup + 'bootstrap\nprintf "arg=<%s>\\n" "${PANEL_ARGS[@]}"\n')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("arg=<--port>\narg=<6217>", result.stdout)
@@ -282,7 +282,7 @@ class BootstrapTests(unittest.TestCase):
         self.assert_no_apt(result)
 
     def test_menu_exit_upgrade_status_and_default_local_mode(self):
-        for answers, expected in (("0", None), ("2", "--upgrade"), ("3", "--status"), ('1 "" ""', "5173")):
+        for answers, expected in (("0", None), ("2", "--upgrade"), ("3", "--status"), ('1 2 ""', "5173"), ('1 "" "" 8.8.8.8', "8443")):
             with self.subTest(answers=answers):
                 result = self.run_shell('MENU_ANSWERS=(' + answers + ')\nbootstrap\nprintf "arg=<%s>\\n" "${PANEL_ARGS[@]}"\n')
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -332,6 +332,24 @@ class BootstrapTests(unittest.TestCase):
             self.assertIn(required, dnf)
         for forbidden in ("upgrade", "setenforce", "semanage", "permissive", "--nogpgcheck", "repo=", "eval "):
             self.assertNotIn(forbidden, dnf)
+
+    def test_v06_maintenance_readonly_and_fixed_argument_gates(self):
+        for args in (("--manage",), ("--manage", "status"), ("--manage", "url"), ("--manage", "logs", "--lines", "200")):
+            result = self.run_bootstrap("CA_FILE=0; ACCOUNT_TOOLS=0", args)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            for event in ("root-check", "system-check", "source-check", "fake-apt", "fake-dnf"):
+                self.assertNotIn(event, result.stdout)
+        for args in (("--manage", "start", "--yes"), ("--manage", "tls", "renew", "--yes"), ("--manage", "backup", "--yes")):
+            result = self.run_bootstrap("CA_FILE=0; ACCOUNT_TOOLS=0", args)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("root-check", result.stdout)
+            self.assert_no_apt(result)
+        for args in (("--manage", "status", "--yes"), ("--manage", "start", "--unit", "other.service"),
+                     ("--manage", "logs", "--lines", "201"), ("--manage", "tls", "inspect"), ("--manage", "url", "--port", "8443")):
+            result = self.run_bootstrap(args=args)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn("root-check", result.stdout)
+            self.assert_no_apt(result)
 
     def test_dependency_probes_use_only_system_python_fixed_ca_and_used_tools(self):
         python = definition("bootstrap_python_ready")

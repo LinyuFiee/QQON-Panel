@@ -20,6 +20,8 @@ irm https://linyufiee.github.io/QQON-Panel/install.ps1 | iex
 
 命令会执行本项目的远程引导脚本。[先下载审阅、wget 入口与安装要求](./installation) · [支持矩阵](./support-matrix) · [发布与 CI 记录](./releases)
 
+下一版 **v0.6 开发中，尚未发布**：[公网 IP HTTPS](./public-https) · [qqon 中文维护](./maintenance)；当前 v0.5 安装仍使用回环监听。
+
 ## 访问面板
 
 在自己的电脑建立隧道，把示例主机替换为实际服务器：

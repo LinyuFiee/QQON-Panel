@@ -179,6 +179,7 @@ jobs:
         with:
           ref: ${{ needs.test-build.outputs.commit }}
           persist-credentials: false
+          fetch-depth: 0
           submodules: false
 
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
@@ -191,12 +192,16 @@ jobs:
       - name: Windows Go and isolated PowerShell tests
         env:
           GOTOOLCHAIN: local
+          RELEASE_COMMIT: ${{ needs.test-build.outputs.commit }}
+          RELEASE_BUILD_TIME: ${{ needs.test-build.outputs.build_time }}
         run: |
           set -euo pipefail
           python -I -m unittest discover -s tools/tests -p 'test_*.py' -v
           go test ./...
           go vet ./...
           powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/windows-tests/test_install.ps1
+          go build -trimpath -ldflags "-X main.commit=$RELEASE_COMMIT -X main.buildTime=$RELEASE_BUILD_TIME" -o "$RUNNER_TEMP/qqon-maintenance-test.exe" .
+          powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/windows-tests/test_maintenance.ps1 -PanelBinary "$RUNNER_TEMP/qqon-maintenance-test.exe"
           # No Windows race run without a configured CGO compiler. Linux runs it.
 
       - name: Build and verify this runner's own Windows package
@@ -254,6 +259,7 @@ jobs:
         with:
           ref: ${{ needs.test-build.outputs.commit }}
           persist-credentials: false
+          fetch-depth: 0
           submodules: false
 
       # Official API verification: https://api.github.com/repos/actions/download-artifact/git/ref/tags/v4.3.0

@@ -113,6 +113,14 @@ class FakeFiles(panel.SafeFiles):
         return types.SimpleNamespace(st_uid=values["uid"], st_gid=values["gid"], st_mode=values["kind"] | values["mode"],
                                      st_dev=entry.st_dev, st_ino=entry.st_ino, st_size=entry.st_size, st_nlink=values["links"])
 
+    def source_parents(self, path):
+        self.within(path)
+        for parent in Path(path).parents:
+            if parent != self.root and self.root not in parent.parents:
+                continue
+            entry = self.info(parent)
+            panel.require(stat.S_ISDIR(entry.st_mode) and not stat.S_ISLNK(entry.st_mode), "Fake import parent is not a real directory")
+
     def owner_mode(self, path, uid, gid, mode):
         self.within(path)
         self.attributes[Path(path)] = {"uid": uid, "gid": gid, "mode": mode}
@@ -182,7 +190,7 @@ class FakeRuntime:
         return encoded(binary_details(path))
 
     def systemctl(self, verb, *options, **_kwargs):
-        assert self.locked and verb in {"stop", "start", "enable", "disable", "daemon-reload", "is-active"}
+        assert self.locked and verb in {"stop", "start", "restart", "enable", "disable", "daemon-reload", "is-active"}
         assert not options or options == ("--quiet",)
         self.events.append(("systemctl", verb))
         if verb == "stop":
@@ -190,7 +198,7 @@ class FakeRuntime:
             if self.fail_stop_once:
                 self.fail_stop_once = False
                 raise panel.Failure("Injected stop failure after stopping.")
-        elif verb == "start":
+        elif verb in ("start", "restart"):
             if self.interrupt_start_once:
                 self.interrupt_start_once = False
                 raise KeyboardInterrupt()
@@ -199,6 +207,27 @@ class FakeRuntime:
         elif verb == "is-active":
             return (0 if self.active else 3), b""
         return 0, b""
+
+    def service_state(self):
+        self.events.append(("service-state", "read"))
+        return {"ActiveState": "active" if self.active else "inactive", "SubState": "running" if self.active else "dead"}
+
+    def running(self):
+        return self.active
+
+    def stop_wait(self):
+        self.systemctl("stop")
+
+    def tls_info(self, binary, host, output=None, cert=None, key=None):
+        assert self.locked and binary_details(binary)["version"] >= "0.6.0"
+        self.events.append(("tls-create" if output else "tls-inspect", host))
+        if output is not None:
+            self.files.mkdir(output, mode=0o700)
+            cert, key = output / "cert.pem", output / "key.pem"
+            self.files.atomic_bytes(cert, b"synthetic certificate " + str(output).encode(), 0o600)
+            self.files.atomic_bytes(key, b"synthetic private key never printed", 0o600)
+        return {"host": host, "fingerprint": hashlib.sha256(cert.read_bytes()).hexdigest(), "notAfter": "2030-11-07T00:00:00Z",
+                "certFile": str(cert), "keyFile": str(key)}
 
     def healthy(self, config):
         self.events.append(("healthy", config["version"]))
@@ -241,18 +270,21 @@ class InstallationTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
         self.paths = types.SimpleNamespace(**{name: self.root.joinpath(*getattr(panel.Paths, name).parts[1:])
-                                              for name in ("binary", "previous", "code_dir", "installer", "manager_previous", "updater", "config_dir", "config", "transaction", "migration", "unit", "data", "lock_dir", "lock")})
+                                              for name in ("binary", "previous", "code_dir", "installer", "manager_previous", "manager_v05_previous", "updater", "qqon", "config_dir", "tls_root", "config", "transaction", "migration", "access_transaction", "backups", "unit", "data", "lock_dir", "lock")})
         for path in (self.paths.binary.parent, self.paths.code_dir.parent, self.paths.unit.parent, self.paths.config_dir.parent,
-                     self.paths.data.parent, self.paths.lock_dir.parent):
+                     self.paths.data.parent, self.paths.lock_dir.parent, self.paths.backups.parent):
             path.mkdir(parents=True, exist_ok=True)
         self.events = []
         self.files = FakeFiles(self.root, self.events)
         self.runtime = FakeRuntime(self.paths, self.events)
+        self.runtime.files = self.files
         self.downloads = FakeDownloads(self.runtime, self.events)
         self.manager = panel.Manager(self.paths, self.files, self.runtime, self.downloads)
 
     def execute(self, update=False, version=None, external_origin=None):
         args = ["--update"] if update else ["--repo", REPO]
+        if not update and not self.paths.config.exists():
+            args.extend(["--mode", "proxy" if external_origin else "local"])
         if version:
             args.extend(["--version", version])
         if external_origin:
@@ -388,7 +420,7 @@ class InstallationTests(unittest.TestCase):
         self.assertEqual(config["binarySHA256"], selected["sha256"])
         self.assertNotEqual(config["binarySHA256"], selected["archive"]["sha256"])
         self.assertEqual(self.paths.binary.stat().st_size, selected["size"])
-        self.assertEqual(config["format"], 1)
+        self.assertEqual(config["format"], 2)
 
     def test_inner_hash_mismatch_never_executes_candidate_or_stops(self):
         self.install()
@@ -734,7 +766,7 @@ class InstallationTests(unittest.TestCase):
         return output.getvalue()
 
     def test_custom_loopback_port_is_recorded_and_preserved_by_upgrade(self):
-        self.run_options(["--repo", REPO, "--port", "6217", "--yes"])
+        self.run_options(["--repo", REPO, "--mode", "local", "--port", "6217", "--yes"])
         config = panel.installation_config(self.paths.config.read_bytes())
         self.assertEqual(config["listen"], "127.0.0.1:6217")
         self.assertEqual(config["healthHost"], config["listen"])
@@ -756,7 +788,7 @@ class InstallationTests(unittest.TestCase):
 
     def test_status_without_install_or_with_pending_transactions_is_read_only(self):
         output = self.run_options(["--status"])
-        self.assertIn("No recognized installation", output)
+        self.assertIn("未找到受支持的安装记录", output)
         self.assertEqual(self.events, [])
         self.install()
         self.paths.transaction.write_bytes(b"pending, deliberately not parsed by status")
@@ -766,8 +798,8 @@ class InstallationTests(unittest.TestCase):
         self.assertTrue(output["pendingBinaryRecovery"])
         self.assertTrue(output["pendingManagerRecovery"])
         self.assertTrue(output["readOnly"])
-        self.assertEqual(output["service"], "not probed")
-        self.assertEqual(self.events, [])
+        self.assertEqual(output["service"]["ActiveState"], "active")
+        self.assertEqual(self.events, [("service-state", "read")])
         self.assertEqual(before, {path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()})
 
     def legacy_fixture(self):
@@ -780,6 +812,10 @@ class InstallationTests(unittest.TestCase):
         self.addCleanup(patch.stop)
         self.files.atomic_bytes(self.paths.installer, legacy, 0o755)
         old = panel.installation_config(self.paths.config.read_bytes())
+        old.pop("accessMode")
+        old.pop("tls")
+        old["format"] = 1
+        self.paths.qqon.unlink()
         old["installerSHA256"] = panel.LEGACY_INSTALLER_SHA256
         self.files.atomic_bytes(self.paths.config, panel.config_bytes(old), 0o644)
         self.events.clear()
@@ -795,7 +831,7 @@ class InstallationTests(unittest.TestCase):
         self.runtime.confirm = self.confirm_migration
         self.run_options(["--upgrade", "--yes"])
         config = panel.installation_config(self.paths.config.read_bytes())
-        self.assertEqual(config, dict(old, installerSHA256=hashlib.sha256(SOURCE).hexdigest()))
+        self.assertEqual(config, panel.config2(old, hashlib.sha256(SOURCE).hexdigest()))
         self.assertEqual(self.paths.installer.read_bytes(), SOURCE)
         self.assertEqual(self.paths.manager_previous.read_bytes(), legacy)
         self.assertFalse(self.paths.migration.exists())
@@ -918,6 +954,256 @@ class InstallationTests(unittest.TestCase):
         self.assertFalse(any(kind in ("migration-confirm", "download") for kind, _ in self.events))
         self.assertIn(("healthy", old["version"]), self.events)
         self.assert_data()
+
+    def test_v06_public_install_summary_permissions_and_immutable_renew(self):
+        self.downloads.use("0.6.0")
+        output = self.run_options(["--repo", REPO, "--host", "8.8.8.8", "--yes"])
+        old = panel.installation_config(self.paths.config.read_bytes())
+        self.assertEqual(old["format"], 2)
+        self.assertEqual(old["accessMode"], "public-selfsigned")
+        self.assertEqual(old["listen"], "0.0.0.0:8443")
+        self.assertEqual(old["origin"], "https://8.8.8.8:8443")
+        self.assertIn(old["origin"], output)
+        self.assertIn(old["tls"]["fingerprint"], output)
+        self.assertIn(str(self.paths.data / "setup-token"), output)
+        self.assertIn("TCP 8443", output)
+        self.assertIn("未检测", output)
+        self.assertNotIn("synthetic private key", output)
+        self.assertEqual(self.paths.qqon.read_bytes(), panel.QQON_WRAPPER)
+        cert, key = panel.tls_paths(old, self.paths)
+        original = key.read_bytes()
+        for item in (self.paths.tls_root, cert.parent):
+            self.files.check(item, directory=True, mode=0o750, gid=991)
+        for item in (cert, key):
+            self.files.check(item, mode=0o640, gid=991)
+        unit = self.paths.unit.read_text()
+        self.assertIn("-tls-cert /etc/server-panel/tls/" + old["tls"]["generation"] + "/cert.pem", unit)
+        (self.paths.data / "accounts.json").write_bytes(b"private account bytes")
+        (self.paths.data / ".panel.lock").write_bytes(b"retained lock inode")
+        output = self.run_options(["--manage", "tls", "renew", "--yes"])
+        new = panel.installation_config(self.paths.config.read_bytes())
+        self.assertNotEqual(old["tls"]["generation"], new["tls"]["generation"])
+        self.assertNotEqual(old["tls"]["fingerprint"], new["tls"]["fingerprint"])
+        self.assertEqual(key.read_bytes(), original)
+        self.assertIn(new["tls"]["fingerprint"], output)
+        self.assertFalse(self.paths.access_transaction.exists())
+        self.assert_data()
+
+    def test_v06_public_and_renew_health_fail_roll_back_config_unit_and_state(self):
+        self.downloads.use("0.6.0")
+        self.install()
+        old_raw, old_unit = self.paths.config.read_bytes(), self.paths.unit.read_bytes()
+        original_health = self.runtime.healthy
+
+        def reject_public(config):
+            panel.require(config.get("tls") is None, "Injected wrong certificate")
+            return original_health(config)
+
+        self.runtime.healthy = reject_public
+        with self.assertRaisesRegex(panel.Failure, "已恢复旧配置"):
+            self.run_options(["--manage", "config", "--mode", "public-selfsigned", "--host", "8.8.8.8", "--yes"])
+        self.assertEqual(self.paths.config.read_bytes(), old_raw)
+        self.assertEqual(self.paths.unit.read_bytes(), old_unit)
+        self.assertTrue(self.runtime.active)
+        self.assertFalse(self.paths.access_transaction.exists())
+        self.assert_data()
+        self.runtime.healthy = original_health
+        self.run_options(["--manage", "config", "--mode", "public-selfsigned", "--host", "8.8.8.8", "--yes"])
+        old = panel.installation_config(self.paths.config.read_bytes())
+        old_raw, old_unit = self.paths.config.read_bytes(), self.paths.unit.read_bytes()
+
+        def reject_new_generation(config):
+            panel.require(config["tls"]["generation"] == old["tls"]["generation"], "Injected new pin failure")
+            return original_health(config)
+
+        self.runtime.healthy = reject_new_generation
+        with self.assertRaisesRegex(panel.Failure, "已恢复旧配置"):
+            self.run_options(["--manage", "tls", "renew", "--yes"])
+        self.assertEqual(self.paths.config.read_bytes(), old_raw)
+        self.assertEqual(self.paths.unit.read_bytes(), old_unit)
+        self.assert_data()
+
+    def test_v06_config_commit_and_failure_preserve_stopped_state(self):
+        self.downloads.use("0.6.0")
+        self.install()
+        self.runtime.active = False
+        self.run_options(["--manage", "config", "--mode", "proxy", "--origin", "https://panel.example.com", "--port", "6273", "--yes"])
+        self.assertFalse(self.runtime.active)
+        old_raw = self.paths.config.read_bytes()
+        self.runtime.fail_health.add("0.6.0")
+        with self.assertRaisesRegex(panel.Failure, "已恢复旧配置"):
+            self.run_options(["--manage", "config", "--mode", "local", "--port", "6274", "--yes"])
+        self.assertFalse(self.runtime.active)
+        self.assertEqual(self.paths.config.read_bytes(), old_raw)
+        self.assert_data()
+
+    def test_v06_imported_pair_is_copied_validated_and_source_not_persisted(self):
+        self.downloads.use("0.6.0")
+        self.install()
+        cert, key = self.root / "administrator-cert.pem", self.root / "administrator-key.pem"
+        cert.write_bytes(b"fake cert chain")
+        key.write_bytes(b"fake private material")
+        output = self.run_options(["--manage", "config", "--mode", "public-certificate", "--host", "PANEL.example.com",
+                                   "--cert", str(cert), "--key", str(key), "--yes"])
+        config = panel.installation_config(self.paths.config.read_bytes())
+        target_cert, target_key = panel.tls_paths(config, self.paths)
+        self.assertEqual(target_cert.read_bytes(), cert.read_bytes())
+        self.assertEqual(target_key.read_bytes(), key.read_bytes())
+        self.assertNotIn(str(cert).encode(), self.paths.config.read_bytes())
+        self.assertNotIn(str(key), output)
+        self.assertIn(("tls-inspect", "panel.example.com"), self.events)
+        with self.assertRaisesRegex(panel.Failure, "仅支持自签"):
+            self.run_options(["--manage", "tls", "renew", "--yes"])
+        for changes in ({"kind": stat.S_IFLNK}, {"kind": stat.S_IFIFO}, {"links": 2}):
+            self.files.attributes[cert] = changes
+            with self.assertRaises(panel.Failure):
+                self.manager.imported_pem(cert)
+        self.files.attributes[cert] = {}
+        with mock.patch.object(panel, "CERT_LIMIT", 1), self.assertRaises(panel.Failure):
+            self.manager.imported_pem(cert)
+
+    def test_v06_old_binary_config_rejected_until_update_without_tls_invocation(self):
+        old, _ = self.legacy_fixture()
+        self.runtime.confirm = self.confirm_migration
+        self.run_options(["--migrate-manager"])
+        self.runtime.confirm = lambda message, unattended: self.events.append(("confirm", message))
+        with self.assertRaisesRegex(panel.Failure, "旧应用不支持证书 CLI"):
+            self.run_options(["--manage", "config", "--mode", "public-selfsigned", "--host", "8.8.8.8", "--yes"])
+        self.assertFalse(any(kind.startswith("tls-") for kind, _ in self.events))
+        self.downloads.use("0.6.0")
+        self.run_options(["--manage", "update", "--version", "v0.6.0", "--yes"])
+        self.assertFalse(any(kind.startswith("tls-") for kind, _ in self.events))
+        self.assertEqual(panel.installation_config(self.paths.config.read_bytes())["accessMode"], "local")
+        self.run_options(["--manage", "config", "--mode", "public-selfsigned", "--host", "8.8.8.8", "--yes"])
+        self.assertTrue(any(kind == "tls-create" for kind, _ in self.events))
+        self.assert_data()
+
+    def test_v06_v05_pinned_migration_preserves_custom_port_proxy_and_data(self):
+        self.execute(external_origin="https://panel.example.com")
+        old = panel.installation_config(self.paths.config.read_bytes())
+        old = {key: value for key, value in old.items() if key not in ("accessMode", "tls")}
+        legacy = b"synthetic pinned v05 manager"
+        self.addCleanup(mock.patch.stopall)
+        mock.patch.object(panel, "V05_INSTALLER_SHA256", hashlib.sha256(legacy).hexdigest()).start()
+        old.update(format=1, listen="127.0.0.1:6273", installerSHA256=panel.V05_INSTALLER_SHA256)
+        self.files.atomic_bytes(self.paths.installer, legacy, 0o755)
+        self.files.atomic_bytes(self.paths.config, panel.config_bytes(old), 0o644)
+        self.files.atomic_bytes(self.paths.unit, panel.unit_bytes(old), 0o644)
+        self.paths.qqon.unlink()
+        original_unit = self.paths.unit.read_bytes()
+        self.runtime.confirm = self.confirm_migration
+        self.events.clear()
+        self.run_options(["--upgrade", "--yes"])
+        self.assertEqual(panel.installation_config(self.paths.config.read_bytes()), panel.config2(old, hashlib.sha256(SOURCE).hexdigest()))
+        self.assertEqual(self.paths.manager_v05_previous.read_bytes(), legacy)
+        self.assertEqual(self.paths.unit.read_bytes(), original_unit)
+        self.assertFalse(any(kind in ("systemctl", "download", "tls-create") for kind, _ in self.events))
+
+    def test_v06_readonly_commands_do_not_lock_recover_or_read_secret(self):
+        self.install()
+        self.paths.access_transaction.write_bytes(b"not parsed by readonly")
+        before = {p: p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
+        for command in ("status", "url"):
+            self.events.clear()
+            result = json.loads(self.run_options(["--manage", command]))
+            self.assertEqual(result["externalReachability"], "未检测")
+            self.assertTrue(result["running"])
+            self.assertEqual(self.events, [("service-state", "read")])
+        self.runtime.logs = mock.Mock()
+        self.run_options(["--manage", "logs", "--lines", "23"])
+        self.runtime.logs.assert_called_once_with(23)
+        self.assertEqual(before, {p: p.read_bytes() for p in self.root.rglob("*") if p.is_file()})
+
+    def test_v06_fixed_start_stop_restart_confirmation_and_busy_lock(self):
+        self.install()
+        for action in ("stop", "start", "restart"):
+            self.events.clear()
+            self.run_options(["--manage", action, "--yes"])
+            self.assertEqual(self.runtime.active, action != "stop")
+            operation = self.events.index(("systemctl", action))
+            confirmation = next(i for i, event in enumerate(self.events) if event[0] == "confirm")
+            self.assertLess(confirmation, operation)
+        self.runtime.busy = True
+        self.events.clear()
+        with self.assertRaises(panel.Failure):
+            self.run_options(["--manage", "backup", "--yes"])
+        self.assertFalse(any(kind == "systemctl" for kind, _ in self.events))
+
+    def test_v06_backup_consistent_bounded_sensitive_and_restores_original_state(self):
+        self.downloads.use("0.6.0")
+        self.run_options(["--repo", REPO, "--host", "8.8.8.8", "--yes"])
+        (self.paths.data / "accounts.json").write_bytes(b"private account bytes")
+        (self.paths.data / ".panel.lock").write_bytes(b"retained lock inode")
+        config = panel.installation_config(self.paths.config.read_bytes())
+        for active in (True, False):
+            self.runtime.active = active
+            self.events.clear()
+            output = self.run_options(["--manage", "backup", "--yes"])
+            self.assertEqual(self.runtime.active, active)
+            self.assertIn("敏感备份", output)
+            self.assertNotIn("private account bytes", output)
+            path = max(self.paths.backups.glob("*.tar"), key=lambda p: p.stat().st_mtime_ns)
+            self.files.check(path, mode=0o600)
+            with tarfile.open(path) as snapshot:
+                names = snapshot.getnames()
+                self.assertIn("data/accounts.json", names)
+                self.assertIn("metadata/install.json", names)
+                self.assertIn("tls/" + config["tls"]["generation"] + "/key.pem", names)
+                self.assertFalse(any(name.endswith(".lock") for name in names))
+            if not active:
+                self.assertNotIn(("systemctl", "start"), self.events)
+        self.assert_data()
+
+    def test_v06_backup_disk_failure_limits_and_special_files_restore_service(self):
+        self.install()
+        source = self.paths.data / "accounts.json"
+        for attribute in ({"kind": stat.S_IFLNK}, {"kind": stat.S_IFIFO}, {"links": 2}):
+            self.files.attributes[source] = attribute
+            with self.assertRaisesRegex(panel.Failure, "备份失败.*已恢复"):
+                self.run_options(["--manage", "backup", "--yes"])
+            self.assertTrue(self.runtime.active)
+        self.files.attributes[source] = {}
+        for key, value in (("BACKUP_FILES", 1), ("BACKUP_LIMIT", 1024)):
+            with mock.patch.object(panel, key, value), self.assertRaisesRegex(panel.Failure, "备份失败.*已恢复"):
+                self.run_options(["--manage", "backup", "--yes"])
+            self.assertTrue(self.runtime.active)
+        replace = self.files.replace
+
+        def no_disk(source, target):
+            if target.parent == self.paths.backups:
+                raise OSError("injected disk full")
+            return replace(source, target)
+
+        self.files.replace = no_disk
+        with self.assertRaisesRegex(panel.Failure, "备份失败.*已恢复"):
+            self.run_options(["--manage", "backup", "--yes"])
+        self.assertTrue(self.runtime.active)
+        self.assertFalse(list(self.paths.backups.glob("*.tar")))
+        self.runtime.fail_start.add("0.3.0")
+        with self.assertRaisesRegex(panel.Failure, "原服务状态恢复失败"):
+            self.run_options(["--manage", "backup", "--yes"])
+        self.assert_data()
+
+    def test_v06_config_power_loss_recovery_and_forged_journal_rejected(self):
+        self.downloads.use("0.6.0")
+        self.install()
+        old = panel.installation_config(self.paths.config.read_bytes())
+        new = dict(old, **panel.access_settings("local", 6273))
+        marker = {"format": 1, "old": old, "new": new, "wasRunning": True}
+        self.files.atomic_bytes(self.paths.access_transaction, panel.config_bytes(marker), 0o600)
+        self.files.atomic_bytes(self.paths.config, panel.config_bytes(new), 0o644)
+        self.files.atomic_bytes(self.paths.unit, panel.unit_bytes(new), 0o644)
+        self.run_options(["--manage", "start", "--yes"])
+        self.assertEqual(panel.installation_config(self.paths.config.read_bytes()), old)
+        self.assertEqual(self.paths.unit.read_bytes(), panel.unit_bytes(old))
+        self.assertTrue(self.runtime.active)
+        self.assertFalse(self.paths.access_transaction.exists())
+        marker["new"]["installerSHA256"] = "f" * 64
+        self.files.atomic_bytes(self.paths.access_transaction, panel.config_bytes(marker), 0o600)
+        self.events.clear()
+        with self.assertRaises(panel.Failure):
+            self.run_options(["--manage", "start", "--yes"])
+        self.assertFalse(any(kind == "systemctl" for kind, _ in self.events))
 
     def test_update_requires_recognized_metadata(self):
         with self.assertRaisesRegex(panel.Failure, "No recognized installation"):
@@ -1106,7 +1392,7 @@ class ValidationTests(unittest.TestCase):
             self.assertEqual(path, "/dev/tty")
             self.assertIn(mode, ("w", "r"))
             if mode == "r":
-                self.assertEqual(bytes(streams[0].written), b"Type yes to continue: ")
+                self.assertEqual(bytes(streams[0].written), "输入 yes 确认继续，其他输入取消：".encode("utf-8"))
             calls.append(mode)
             raw = NonSeekableTTY(mode)
             streams.append(raw)
@@ -1120,12 +1406,151 @@ class ValidationTests(unittest.TestCase):
     def test_confirmation_without_tty_requires_explicit_yes(self):
         with mock.patch.object(panel, "open", side_effect=OSError("no controlling terminal"), create=True) as opener, \
                 contextlib.redirect_stdout(io.StringIO()):
-            with self.assertRaisesRegex(panel.Failure, "No controlling terminal"):
+            with self.assertRaisesRegex(panel.Failure, "没有控制终端"):
                 panel.Runtime().confirm("Confirm a test operation", False)
             opener.assert_called_once_with("/dev/tty", "w", encoding="utf-8")
             opener.reset_mock()
             panel.Runtime().confirm("Explicit unattended test", True)
             opener.assert_not_called()
+
+    def test_v06_strict_modes_schema_and_public_host_boundaries(self):
+        for mode, host, external in (("local", None, None), ("proxy", None, "https://panel.example.com"),
+                                     ("public-selfsigned", "8.8.8.8", None), ("public-certificate", "panel.example.com", None)):
+            settings = panel.access_settings(mode, host=host, external_origin=external)
+            config = {"format": 2, "repository": REPO, "version": "0.6.0", "dataSchema": 1, "commit": "a" * 40,
+                      "buildTime": "2026-11-07T00:00:00Z", "binarySHA256": "a" * 64, "installerSHA256": "b" * 64, **settings}
+            if mode.startswith("public-"):
+                config["tls"] = {"generation": "a" * 32, "host": host, "fingerprint": "c" * 64, "notAfter": "2030-11-07T00:00:00Z"}
+            self.assertEqual(panel.installation_config(panel.config_bytes(config)), config)
+            for patch in ({"format": True}, {"extra": "ignored?"}, {"healthHost": "evil.example"}, {"listen": "0.0.0.0:80"}):
+                with self.subTest(mode=mode, patch=patch), self.assertRaises(panel.Failure):
+                    panel.installation_config(panel.config_bytes(dict(config, **patch)))
+            if config["tls"] is not None:
+                for patch in ({"generation": "../escape"}, {"certFile": "/tmp/cert.pem"}, {"host": "evil.example"},
+                              {"fingerprint": "C" * 64}, {"notAfter": "2030-02-30T00:00:00Z"}):
+                    with self.subTest(patch=patch), self.assertRaises(panel.Failure):
+                        panel.installation_config(panel.config_bytes(dict(config, tls=dict(config["tls"], **patch))))
+        for address in ("127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.1.1", "169.254.1.1", "224.0.0.1", "0.0.0.0",
+                        "192.0.2.1", "198.51.100.1", "203.0.113.1", "240.0.0.1", "100.64.0.1", "192.0.0.9", "198.18.0.1", "::1", "8.8.8.08", "panel.example.com"):
+            with self.subTest(address=address), self.assertRaises(panel.Failure):
+                panel.access_settings("public-selfsigned", host=address)
+        self.assertEqual(panel.canonical_host("PANEL.example.com"), "panel.example.com")
+
+    def test_v06_maintenance_arguments_are_strict_and_have_no_service_override(self):
+        for action in ("status", "url", "start", "stop", "restart", "logs", "update", "backup", "config"):
+            options = panel.arguments(["--manage", action])
+            self.assertEqual(options.manage, action)
+        self.assertEqual(panel.arguments(["--manage"]).manage, "menu")
+        self.assertEqual(panel.arguments(["--manage", "tls", "renew"]).manage, "renew")
+        self.assertEqual(panel.arguments(["--manage", "logs"]).lines, 50)
+        self.assertEqual(panel.arguments(["--manage", "logs", "--lines=200"]).lines, 200)
+        for argv in (["--manage", "status", "--yes"], ["--manage", "url", "--version=v0.6.0"], ["--manage", "logs", "--lines=201"],
+                     ["--manage", "tlsrenew"], ["--manage", "tls", "inspect"], ["--manage", "start", "--repo", REPO],
+                     ["--manage", "update", "--mode=local"], ["--manage", "config", "--host=8.8.8.8;id"], ["--manage", "stop", "--yes", "--yes"]):
+            with self.subTest(argv=argv), self.assertRaises(panel.Failure):
+                panel.arguments(argv)
+        runtime = panel.Runtime()
+        runtime.run = mock.Mock(return_value=(0, b""))
+        for verb in ("start", "stop", "restart"):
+            runtime.systemctl(verb)
+            self.assertEqual(runtime.run.call_args.args[0], ["/usr/bin/systemctl", verb, panel.UNIT])
+        for verb, options in (("start", ("evil.service",)), ("stop", ("--all",)), ("show", ("--property=Environment",)), ("status", ())):
+            with self.subTest(verb=verb), self.assertRaises(panel.Failure):
+                runtime.systemctl(verb, *options)
+
+    def test_v06_https_probe_pins_leaf_checks_san_and_connects_only_loopback(self):
+        leaf = b"synthetic known leaf DER"
+        tls = {"generation": "a" * 32, "host": "8.8.8.8", "fingerprint": hashlib.sha256(leaf).hexdigest(), "notAfter": "2030-11-07T00:00:00Z"}
+        config = {"listen": "0.0.0.0:8443", "healthHost": "8.8.8.8:8443", "version": "0.6.0", "tls": tls}
+        good_info = {"subjectAltName": (("IP Address", "8.8.8.8"),), "notAfter": "Nov  7 00:00:00 2030 GMT"}
+        raw_socket, wrapped = mock.Mock(), mock.Mock()
+        context = mock.Mock(check_hostname=True, verify_mode=panel.ssl.CERT_REQUIRED, verify_flags=panel.ssl.VERIFY_DEFAULT)
+        context.wrap_socket.return_value = wrapped
+        wrapped.getpeercert.side_effect = lambda binary_form=False: leaf if binary_form else good_info
+        with mock.patch.object(panel.ssl, "SSLContext", return_value=context) as factory, \
+                mock.patch.object(panel.socket, "create_connection", return_value=raw_socket) as connect:
+            connection = panel.PinnedHTTPSConnection(config, Path("/fake/active/cert.pem"), 2)
+            connection.connect()
+            factory.assert_called_once_with(panel.ssl.PROTOCOL_TLS_CLIENT)
+            self.assertTrue(context.check_hostname)
+            self.assertFalse(context.hostname_checks_common_name)
+            self.assertEqual(context.verify_mode, panel.ssl.CERT_REQUIRED)
+            connect.assert_called_with(("127.0.0.1", 8443), 2)
+            context.wrap_socket.assert_called_with(raw_socket, server_hostname="8.8.8.8")
+            context.load_verify_locations.assert_called_once_with(cafile=str(Path("/fake/active/cert.pem")))
+            connection.close()
+            wrapped.getpeercert.side_effect = lambda binary_form=False: b"wrong leaf DER" if binary_form else good_info
+            with self.assertRaisesRegex(panel.Failure, "fingerprint"):
+                panel.PinnedHTTPSConnection(config, Path("/fake/active/cert.pem"), 2).connect()
+            wrapped.getpeercert.side_effect = lambda binary_form=False: leaf if binary_form else dict(good_info, subjectAltName=())
+            with self.assertRaisesRegex(panel.Failure, "SAN"):
+                panel.PinnedHTTPSConnection(config, Path("/fake/active/cert.pem"), 2).connect()
+            wrapped.getpeercert.side_effect = lambda binary_form=False: leaf if binary_form else dict(good_info, notAfter="Nov  7 00:00:00 2020 GMT")
+            with self.assertRaisesRegex(panel.Failure, "有效期"):
+                panel.PinnedHTTPSConnection(config, Path("/fake/active/cert.pem"), 2).connect()
+            context.wrap_socket.side_effect = panel.ssl.SSLCertVerificationError("fake SAN host mismatch")
+            with mock.patch.object(panel, "deadline", return_value=contextlib.nullcontext()):
+                self.assertFalse(panel.Runtime().health_once(config, 2))
+            raw_socket.close.assert_called()
+
+    def test_v06_tls_cli_is_fixed_bounded_and_rejects_bad_info(self):
+        runtime = panel.Runtime()
+        binary_path, output = Path("/fake/panel"), Path("/fake/new-generation")
+        info = {"host": "8.8.8.8", "fingerprint": "c" * 64, "notAfter": "2030-11-07T00:00:00Z",
+                "certFile": str(output / "cert.pem"), "keyFile": str(output / "key.pem")}
+        runtime.run = mock.Mock(return_value=(0, encoded(info)))
+        self.assertEqual(runtime.tls_info(binary_path, "8.8.8.8", output=output), info)
+        self.assertEqual(runtime.run.call_args.args[0], [binary_path, "-tls-create", "-tls-host", "8.8.8.8", "-tls-output", str(output)])
+        self.assertEqual(runtime.run.call_args.kwargs, {"timeout": 15})
+        runtime.tls_info(binary_path, "8.8.8.8", cert=output / "cert.pem", key=output / "key.pem")
+        self.assertIn("-tls-inspect", runtime.run.call_args.args[0])
+        for patch in ({"host": "evil.example"}, {"keyFile": "/arbitrary/key"}, {"fingerprint": "bad"}, {"notAfter": "2000-01-01T00:00:00Z"}, {"extra": "no"}):
+            runtime.run.return_value = (0, encoded(dict(info, **patch)))
+            with self.subTest(patch=patch), self.assertRaises(panel.Failure):
+                runtime.tls_info(binary_path, "8.8.8.8", output=output)
+        runtime.run.return_value = (1, b"secret must never reach error")
+        with self.assertRaises(panel.Failure) as failure:
+            runtime.tls_info(binary_path, "8.8.8.8", output=output)
+        self.assertNotIn("secret", str(failure.exception))
+
+    def test_v06_logs_fixed_unit_bounded_and_secret_redaction(self):
+        runtime = panel.Runtime()
+        runtime.run = mock.Mock(return_value=(0, b"normal entry\npassword=hunter2\ntoken=shouldnotprint\n-----BEGIN PRIVATE KEY-----\n" + b"a" * 64 + b"\n-----END PRIVATE KEY-----\n"))
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            runtime.logs(50)
+        self.assertIn("normal entry", output.getvalue())
+        for secret in ("hunter2", "shouldnotprint", "a" * 64, "PRIVATE KEY"):
+            self.assertNotIn(secret, output.getvalue())
+        self.assertEqual(runtime.run.call_args.args[0], ["/usr/bin/journalctl", "--unit=" + panel.UNIT, "--lines=50", "--no-pager", "--output=cat", "--quiet"])
+        self.assertEqual(runtime.run.call_args.kwargs["output_limit"], 128 * 1024)
+        runtime.run.return_value = (0, b"x" * (panel.LOG_LIMIT + 1))
+        with self.assertRaises(panel.Failure):
+            runtime.logs(200)
+
+    def test_v06_main_readonly_commands_skip_preflight_source_and_umask(self):
+        for command in ("status", "url", "logs"):
+            manager = mock.Mock()
+            with mock.patch.object(panel, "Manager", return_value=manager), \
+                    mock.patch.object(panel.sys, "argv", ["-", "reviewed.sh", "--manage", command]), \
+                    mock.patch.object(panel, "read_source", side_effect=AssertionError("readonly source")), \
+                    mock.patch.object(panel.os, "umask", side_effect=AssertionError("readonly umask")):
+                panel.main()
+            manager.runtime.preflight.assert_not_called()
+            manager.execute.assert_not_called()
+            manager.manage.assert_called_once()
+
+    def test_v06_errors_are_chinese_and_legacy_wrapper_is_untouched(self):
+        for message in ("Installed management script was modified; refusing adoption.", "GitHub HTTPS transfer failed; TLS verification was not disabled.",
+                        "Update failed; rollback also failed.", "No recognized installation exists; first run the reviewed local install.sh.",
+                        "Invalid origin domain.", "Invalid SHA256SUMS.", "Unsafe type or owner at /sensitive/file", "A management subprocess timed out."):
+            result = panel.user_error(panel.Failure(message))
+            self.assertRegex(result, r"[\u3400-\u9fff]")
+            self.assertNotIn(message, result)
+        self.assertEqual(hashlib.sha256(panel.WRAPPER).hexdigest(), "5cdc4f05cce7189b7212e5b12496e0754985c45c1462fc2ce0aa1a86f81b1408")
+        self.assertEqual(panel.V05_INSTALLER_SHA256, "9af6eaf93bbdd5f622bc9bc7b37e4a6f1f218298e7a403ee2d7cfffbd8630936")
+        self.assertIn(b"--manage", panel.QQON_WRAPPER)
+        self.assertNotIn(b"eval", panel.QQON_WRAPPER)
 
     def test_wrapper_matches_embedded_reviewed_copy(self):
         self.assertEqual((SCRIPTS / "update.sh").read_bytes(), panel.WRAPPER)
@@ -1309,7 +1734,7 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(panel.WRAPPER).hexdigest(), panel.LEGACY_WRAPPER_SHA256)
         config = {"repository": REPO, "listen": panel.LISTEN, "origin": "", "healthHost": panel.LISTEN}
         self.assertEqual(panel.unit_bytes(config), panel.legacy_unit_bytes(config))
-        self.assertEqual(SOURCE.splitlines()[1], b"# QQON-Panel interactive installer protocol: 3")
+        self.assertEqual(SOURCE.splitlines()[1], b"# QQON-Panel interactive installer protocol: 4")
         self.assertEqual(panel.LEGACY_INSTALLER_SHA256, "bc78f2ec682704bb5beb965806ec56e511827f6d3451949a03d5b40db535eb91")
 
     def test_unit_preserves_deployment_sandboxing(self):

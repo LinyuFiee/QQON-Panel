@@ -1,11 +1,36 @@
-# QQON-Panel Windows entry. PowerShell 5.1 / inbox .NET only.
+﻿# QQON-Panel Windows entry. PowerShell 5.1 / inbox .NET only.
 # The Pages copy of this file is an entry point, not a second installer.
 [CmdletBinding()]
 param()
 
 function Assert-QP {
     param([bool]$Condition, [string]$Message)
-    if (-not $Condition) { throw $Message }
+    if (-not $Condition) { throw (Get-QPFailureText $Message) }
+}
+
+function Get-QPFailureText {
+    param([string]$Message)
+    if ($Message -match '[\u3400-\u9fff]') { return $Message }
+    switch -Regex ($Message) {
+        'JSON|metadata fields|metadata field' { return 'JSON 格式、字段、类型、编码或长度不符合约定；拒绝重复或额外字段。[QP_JSON]' }
+        'nine|eight|asset.*count|asset.*set|format 3|format 2|v0.5.0|binary record count' { return '发行包必须是 v0.5.0 或以上的 format3 九资产集合，manifest 和摘要记录必须精确匹配。[QP_RELEASE_ASSETS]' }
+        'Version|version|stable|Downgrade' { return '版本或程序身份不符合约定；只接受规范的稳定版本，不允许降级或同版本换包。[QP_VERSION]' }
+        'SHA-256|digest|checksum|hash|modified|CRC' { return '文件的 SHA-256、校验记录、CRC 或已保存身份不一致，已拒绝使用该文件。[QP_INTEGRITY]' }
+        'URL|HTTPS|redirect|TLS certificate|GitHub|Download' { return 'HTTPS 下载、地址或响应校验失败；仅允许固定 GitHub 仓库及 CDN，不跳过证书验证。[QP_HTTPS]' }
+        'size|limit|empty|deadline|Truncated|timed-out' { return '文件、响应或操作超出大小/时间限制，或读取不完整，已停止操作。[QP_LIMIT]' }
+        'Build-info|build-info|Build time|calendar|commit|Repository|schema|identity|platform' { return '程序、仓库、提交、平台或数据格式身份不符合约定；不会迁移或重置账户。[QP_IDENTITY]' }
+        'JSON' { return 'JSON 数据不符合严格格式。[QP_JSON]' }
+        'ZIP' { return 'Windows ZIP 格式不安全；只允许单个普通 panel.exe，拒绝目录、链接、额外字段或压缩边界异常。[QP_ZIP]' }
+        'PE|AMD64|MZ|DLL|subsystem' { return '程序必须是有效 AMD64 Windows 控制台 PE 文件，拒绝 32 位程序或 DLL。[QP_PE]' }
+        'ACL|owner|access|inherit|private|unprivileged|parent' { return '路径所有者或受保护 ACL 不符合私有权限约定；拒绝宽泛、可写或不安全的继承权限。[QP_ACL]' }
+        'PowerShell|Administrator|amd64 Windows|Windows 10/11|NTFS' { return '请在受支持的原生 amd64 Windows 上使用管理员 64 位 PowerShell 5.1；安装目录必须位于固定 NTFS 卷。[QP_HOST]' }
+        'path|Path|file|directory|reparse|symlink|component' { return '文件或目录路径不符合约定；必须是规范本地路径，拒绝链接、重解析点、未知现有文件或缺失文件。[QP_PATH]' }
+        'mutex|Another QQON' { return '安装或维护正在进行，或全局互斥锁权限不安全；未并行启动另一事务。[QP_LOCK]' }
+        'service|Service|SCM|process|Process' { return '固定 QQONPanel 服务身份、SCM 配置、状态或进程检查未通过；未强制结束进程或绕过文件锁。[QP_SERVICE]' }
+        'Port|port|Origin|origin|DNS|domain|Listener|loopback' { return '监听端口或已有 HTTPS 代理地址不合法；请检查规范端口、域名和访问模式。[QP_ACCESS]' }
+        'argument|Argument' { return '进程参数无效，拒绝执行。[QP_ARGUMENT]' }
+        default { return '系统操作未完成；请检查权限、磁盘空间、网络或保留的事务状态后重试。未显示可能含敏感信息的底层异常。[QP_SYSTEM]' }
+    }
 }
 
 function Get-QPAssetLimits {
@@ -405,9 +430,13 @@ function ConvertTo-QPArgument {
 
 function Invoke-QPBootstrap {
     Assert-QPNativeHost -Administrator
-    [Console]::WriteLine('QQON-Panel: fetch only the fixed GitHub Release, verify its manifest and SHA-256, then execute a protected local file.')
-    [Console]::WriteLine('TLS and checksums trust this repository/publisher; they are not an independent code signature. No global execution policy is changed.')
+    [Console]::WriteLine('QQON-Panel：只从固定 GitHub 发行版下载，核验 manifest 和 SHA-256 后执行受保护的本地安装器。')
+    [Console]::WriteLine('HTTPS 和摘要依赖此仓库发布者，并非独立代码签名；不会修改全局执行策略。')
     $metadata = Get-QPReleaseMetadata
+    if ((ConvertTo-QPVersion $metadata.Manifest['version']) -lt [version]'0.6.0') {
+        [Console]::WriteLine('当前公开发行版仍为 v0.5：继续使用已校验的旧安装器，仅配置本地访问或已有 HTTPS 代理；旧安装器界面可能为英文。')
+        [Console]::WriteLine('公网 HTTPS 与中文 qqon 维护功能需待 v0.6 正式发布后使用；不会向旧程序发送新增证书参数。')
+    }
     $bytes = Read-QPVerifiedAsset $metadata 'install.ps1'
     # Do not execute elevated code under a user-owned TEMP ancestor. The inbox
     # Windows Temp parent allows creating children, but not replacing ours.
@@ -460,5 +489,5 @@ function Invoke-QPBootstrap {
 # Dot-sourcing is a definition-only test/import entry. No production path overrides.
 if ($MyInvocation.InvocationName -ne '.') {
     $ErrorActionPreference = 'Stop'
-    try { Invoke-QPBootstrap } catch { throw ('QQON-Panel bootstrap refused/failed: ' + $_.Exception.Message) }
+    try { Invoke-QPBootstrap } catch { [Console]::Error.WriteLine('QQON-Panel 引导安装未完成：' + (Get-QPFailureText $_.Exception.Message)); exit 1 }
 }

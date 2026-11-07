@@ -1,4 +1,4 @@
-# Native PowerShell 5.1 tests. No Pester, network, service registration or live install paths.
+﻿# Native PowerShell 5.1 tests. No Pester, network, service registration or live install paths.
 [CmdletBinding()]
 param()
 $ErrorActionPreference = 'Stop'
@@ -16,6 +16,8 @@ function Check {
 }
 function Refuses {
     param([scriptblock]$Body, [string]$Pattern = '.')
+    $legacyPatterns = @{ nine = 'QP_RELEASE_ASSETS'; canonical = 'QP_HTTPS'; size = 'QP_LIMIT'; duplicate = 'QP_(SYSTEM|INTEGRITY)'; 'format 3' = 'QP_RELEASE_ASSETS'; differs = 'QP_IDENTITY'; fixed = '固定'; Version = '版本|白名单'; 'owner|protected' = '管理员|受保护'; 'previous version was atomically restored' = '旧版本.*恢复|原子恢复'; 'rollback is incomplete' = '回滚未完成' }
+    if ($legacyPatterns.ContainsKey($Pattern)) { $Pattern = $legacyPatterns[$Pattern] }
     $caught = $false
     try { & $Body | Out-Null } catch { $caught = $true; Check ($_.Exception.Message -match $Pattern) ('Wrong refusal: ' + $_.Exception.Message) }
     Check $caught 'Expected refusal, but the operation succeeded.'
@@ -56,7 +58,7 @@ function New-TestPaths {
     return @{ Code = $code; State = $state; Data = $data; Binary = "$code\panel.exe"; Candidate = "$code\panel.next.exe"; Previous = "$code\panel.previous.exe"; Installer = "$code\install.ps1"; Updater = "$code\update.ps1"; Config = "$state\install.json"; Journal = "$state\transaction.json" }
 }
 function New-Fixture {
-    param([string]$Version = '0.5.0', [switch]$Legacy)
+    param([string]$Version = '0.6.0', [switch]$Legacy)
     $limits = Get-QPAssetLimits -Legacy:$Legacy
     $sums = @{}; $sizes = @{}; $assets = @()
     foreach ($name in $limits.Keys) {
@@ -81,7 +83,7 @@ function New-Fixture {
     return @{ Manifest = $manifest; Raw = $raw; Sums = $sums; Release = $release; Api = $api }
 }
 function New-TestConfig {
-    param([string]$Version = '0.5.0', [byte[]]$Payload)
+    param([string]$Version = '0.6.0', [byte[]]$Payload)
     $value = New-QPInstallConfig (New-Fixture $Version) 5173 ''
     if ($null -ne $Payload) { $value['binarySize'] = $Payload.Length; $value['binarySHA256'] = Get-QPSha256 $Payload }
     return $value
@@ -128,6 +130,9 @@ try {
         Check ($shared -ceq $install.Substring($start, $end - $start)) 'Bootstrap/installer parser drift.'
         foreach ($name in @('bootstrap.ps1', 'install.ps1', 'update.ps1')) {
             $path = [IO.Path]::Combine($script:Scripts, $name)
+            $bytes = [IO.File]::ReadAllBytes($path)
+            Check ($bytes[0] -eq 0xef -and $bytes[1] -eq 0xbb -and $bytes[2] -eq 0xbf) 'PowerShell 5.1 requires UTF-8 BOM for Chinese source.'
+            Check (-not ([Text.Encoding]::UTF8.GetString($bytes)).Contains("`r")) 'Release source must use LF to keep source hashes reproducible.'
             $tokens = $null; $errors = $null; $ast = [Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
             Check ($errors.Count -eq 0) ($errors | Out-String)
             $limit = 524288; if ($name -ceq 'update.ps1') { $limit = 32768 }
@@ -251,7 +256,7 @@ using System.Threading;
 public static class TestPanel {
   public static int Main(string[] args) {
     if (args.Length == 1 && args[0] == "-build-info") {
-      Console.WriteLine("{\"version\":\"0.5.0\",\"commit\":\"cccccccccccccccccccccccccccccccccccccccc\",\"buildTime\":\"2026-11-07T00:00:00Z\",\"repository\":\"LinyuFiee/QQON-Panel\",\"dataSchema\":1,\"os\":\"windows\",\"arch\":\"amd64\"}"); return 0;
+      Console.WriteLine("{\"version\":\"0.6.0\",\"commit\":\"cccccccccccccccccccccccccccccccccccccccc\",\"buildTime\":\"2026-11-07T00:00:00Z\",\"repository\":\"LinyuFiee/QQON-Panel\",\"dataSchema\":1,\"os\":\"windows\",\"arch\":\"amd64\"}"); return 0;
     }
     if (args.Length == 1 && args[0] == "timeout") { Thread.Sleep(20000); return 0; }
     if (args.Length == 1 && args[0] == "large") { Console.Write(new string('x',100000)); return 0; }
@@ -433,7 +438,7 @@ public static class TestPanel {
             [IO.File]::WriteAllBytes($paths.Binary,(Bytes 'old'))
             if ($phase -ceq 'ready') { [IO.File]::WriteAllBytes($paths.Previous,(Bytes 'old')); [IO.File]::WriteAllBytes($paths.Binary,(Bytes 'new')) }
             else { [IO.File]::WriteAllBytes($paths.Candidate,(Bytes 'new')) }
-            [IO.File]::WriteAllBytes($paths.Journal,(ConvertTo-QPJsonBytes @{format=1;kind='update';phase=$phase;old=$old;new=$new}))
+            [IO.File]::WriteAllBytes($paths.Journal,(ConvertTo-QPJsonBytes @{format=2;kind='update';phase=$phase;old=$old;new=$new}))
             $sentinel=[IO.Path]::Combine($paths.Data,'keep'); [IO.File]::WriteAllText($sentinel,'kept')
             Resume-QPTransaction $paths
             Check (-not [IO.File]::Exists($paths.Journal) -and [IO.File]::ReadAllText($paths.Binary) -ceq 'old' -and [IO.File]::ReadAllText($sentinel) -ceq 'kept')
@@ -473,7 +478,7 @@ public static class TestPanel {
         $config = New-TestConfig
         $text = [Text.UTF8Encoding]::new($false).GetString((ConvertTo-QPJsonBytes $config))
         $keys=[regex]::Matches($text, '"((?:[^"\\]|\\.)*)"\s*:')
-        Check ($keys.Count -eq 14)
+        Check ($keys.Count -eq 16)
         foreach ($bad in @('0.5.0','v0.5.0; whoami','v0.5.0-beta','v01.5.0')) { Refuses { Invoke-QPInstalledUpdater $bad $true } 'Version' }
         $temporary = [IO.Path]::Combine($script:Root,'wrapper-owner'); [void][IO.Directory]::CreateDirectory($temporary)
         Refuses { Assert-QPWrapperPath $temporary } 'owner|protected'

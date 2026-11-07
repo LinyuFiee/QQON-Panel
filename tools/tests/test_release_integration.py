@@ -34,13 +34,13 @@ class ReleaseIntegrationTests(unittest.TestCase):
         # Explicit test-only identity, not a real repository, commit or release.
         with tempfile.TemporaryDirectory(prefix="panel-test-only-release-") as temporary:
             output = Path(temporary) / "assets"
-            manifest = builder.build_release(version="v0.5.0", repository="fixture-owner/fixture-panel",
+            manifest = builder.build_release(version="v0.6.0", repository="fixture-owner/fixture-panel",
                                              commit="a" * 40, build_time="2026-11-06T00:00:00Z",
                                              output=output, go=go)
             installer = installer_module()
             sums = installer.checksums((output / "SHA256SUMS").read_bytes())
             parsed = installer.manifest((output / "release.json").read_bytes(), sums,
-                                        "fixture-owner/fixture-panel", "v0.5.0")
+                                        "fixture-owner/fixture-panel", "v0.6.0")
             self.assertEqual(parsed, manifest)
             self.assertEqual(manifest["format"], 3)
             self.assertEqual({path.name for path in output.iterdir()}, {

@@ -23,7 +23,7 @@ export default defineConfig({
     nav: [
       { text: '开始使用', link: '/guide/quickstart', activeMatch: '/guide/(quickstart|installation|legacy-v0-4)' },
       { text: '支持范围', link: '/guide/support-matrix' },
-      { text: '运维指南', link: '/guide/security', activeMatch: '/guide/(security|windows-services|upgrade-migration|troubleshooting)' },
+      { text: '运维指南', link: '/guide/security', activeMatch: '/guide/(security|windows-services|maintenance|public-https|upgrade-migration|troubleshooting)' },
       { text: '发布状态', link: '/guide/releases' },
       { text: 'GitHub', link: 'https://github.com/LinyuFiee/QQON-Panel' }
     ],
@@ -42,6 +42,8 @@ export default defineConfig({
         items: [
           { text: '安全边界', link: '/guide/security' },
           { text: 'Windows 服务', link: '/guide/windows-services' },
+          { text: 'qqon 维护（v0.6 待发布）', link: '/guide/maintenance' },
+          { text: '公网 IP HTTPS（v0.6 待发布）', link: '/guide/public-https' },
           { text: '升级与迁移', link: '/guide/upgrade-migration' },
           { text: '故障排查', link: '/guide/troubleshooting' }
         ]

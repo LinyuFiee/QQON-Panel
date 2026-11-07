@@ -7,9 +7,9 @@ unset BASH_ENV ENV PYTHONPATH PYTHONHOME CURL_HOME CURL_CA_BUNDLE SSL_CERT_FILE 
 
 fail() { printf 'QQON-Panel: %s\n' "$*" >&2; exit 1; }
 if [[ ${1-} == --help || ${1-} == -h ]]; then
-    printf '%s\n' 'QQON-Panel: run this entry as root to open the interactive installer.' \
-        'Downloads only the current official Release; v0.5.0 or later is required.' \
-        'For an offline/read-only status check, run the already installed local manager.'
+    printf '%s\n' 'QQON-Panel：请在 root 终端运行此入口，打开中文交互安装向导。' \
+        '只下载并校验官方 Release。v0.6 提供公网 HTTPS 和 qqon 维护；已验证的 v0.5 仍可安装。' \
+        '离线、只读查询请使用已安装的本机管理器，不会安装依赖。'
     exit 0
 fi
 (( EUID == 0 )) || fail '请在 root 终端运行；本次未安装任何软件。'
@@ -99,8 +99,15 @@ done < "$stage/SHA256SUMS"
 actual=$(sha256sum "$stage/install.sh"); actual=${actual%% *}
 [[ $actual == "$expected" ]] || fail '安装器摘要不匹配，未执行任何下载代码。'
 { IFS= read -r first; IFS= read -r second; } < "$stage/install.sh"
-[[ $first == '#!/bin/bash' && $second == '# QQON-Panel interactive installer protocol: 3' ]] ||
-    fail '当前稳定版仍为旧安装器；一键交互入口需要 v0.5.0，请查看文档中的旧版安装方式。'
+[[ $first == '#!/bin/bash' ]] || fail '下载内容不是受支持的官方安装器。'
+if [[ $second == '# QQON-Panel interactive installer protocol: 4' ]]; then
+    printf '%s\n' '已校验 v0.6 安装入口：公网 HTTPS 需确认主机地址，不会查询外部 IP 或修改防火墙。'
+elif [[ $second == '# QQON-Panel interactive installer protocol: 3' && $actual == 9af6eaf93bbdd5f622bc9bc7b37e4a6f1f218298e7a403ee2d7cfffbd8630936 ]]; then
+    printf '%s\n' '当前官方稳定版为 v0.5：继续运行已验证的旧安装器，仅支持本机访问或已有 HTTPS 代理。' \
+        '旧版向导可能显示英文，不含 v0.6 公网证书和 qqon 维护功能；可取消后等待新版本。'
+else
+    fail '安装器版本或协议不受支持；未执行下载代码。请查看官方版本说明。'
+fi
 chmod 700 "$stage/install.sh"
 printf '%s\n' '摘要校验完成。此校验信任官方仓库，不等同独立发布签名。'
 /bin/bash -p "$stage/install.sh" "$@"

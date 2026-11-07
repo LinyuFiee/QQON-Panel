@@ -4,6 +4,34 @@
 
 > **[v0.5.0 已发布](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.5.0)**，提供 Linux / Windows 交互安装入口。v0.4.0 保留为旧版，不覆盖其公开产物。
 
+## v0.6 开发中：中文公网与快捷维护
+
+当前网络入口仍按已发布 latest 工作；v0.6 正式发布前不会把旧安装器冒充新功能。新源码提供中文四模式向导：默认 `public-selfsigned`（确认公网 IPv4、HTTPS 8443），也可用仅本机、现有 HTTPS 代理或导入证书模式。
+
+安装完成集中输出实际配置 WebUI URL、监听端口、服务状态、证书 SHA-256 指纹／有效期和初始化令牌文件位置。**这不等于外网连通检查通过**；请自行确认云安全组、本机防火墙和 NAT。自签证书有浏览器信任提示，不安装系统信任根，不打印令牌或私钥。
+
+v0.6 维护入口：
+
+```text
+qqon                 中文维护菜单
+qqon status          只读状态
+qqon url             只读显示配置地址
+qqon start           启动固定面板服务
+qqon stop            停止固定面板服务
+qqon restart         重启固定面板服务
+qqon logs            有限日志
+qqon update          升级已安装程序
+qqon backup          权限受限的一致备份
+qqon config          显式改变端口和访问模式
+qqon tls renew       自签证书续期
+```
+
+Linux 在 `/usr/local/bin/qqon` 安装固定包装入口；Windows 在固定程序目录生成 `qqon.cmd`／`qqon.ps1`，安装器单独确认后才向系统 PATH 追加该目录。当前父终端不会自动刷新，重开终端使用；拒绝追加时给出完整路径。旧 `panel-update` 和 Windows `update.ps1` 仍保留。
+
+备份包含认证和证书敏感信息，不公开上传；维护操作按原运行状态恢复服务，原本停止的服务不因备份而被启动。改配置和续期使用新的不可变证书代次，启动失败回滚旧配置；不能通过忽略证书校验让健康探针“通过”。
+
+已有 v0.4/v0.5 先显式迁移已知官方管理器，保留旧访问模式，然后升级应用到 v0.6，再通过 `qqon config` 开启公网。未知安装不强制接管，不因新默认值而自动暴露原本仅本机的服务。
+
 ## 一行启动交互
 
 Linux，在 root 的 Bash 终端运行：
@@ -72,6 +100,7 @@ python3 -I -m unittest discover -s scripts/tests
 
 ```powershell
 powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/windows-tests/test_install.ps1
+powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/windows-tests/test_maintenance.ps1 -PanelBinary C:\path\to\verified-test-panel.exe
 ```
 
 只对测试进程设置执行策略，不改变系统全局策略；测试使用临时目录与模拟服务，不安装真实宿主服务。
