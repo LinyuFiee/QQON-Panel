@@ -1,12 +1,12 @@
 # Windows 服务
 
-::: warning v0.5 待发布 · 未全面实机验证
-当前 v0.4.0 没有 Windows Release 附件。本页描述下一版本的原生服务安装约束，**不代表 Windows 10/11 或各 Server 版本已经完成真实安装、升级与故障恢复验收**。不要手工拼装服务去替代未发布的安装流程。
+::: info v0.5.0 已发布 · 真实 SCM 安装仍未验证
+[v0.5.0 正式 Release](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.5.0) 已提供 Windows x64 程序与 PowerShell 安装器；[CI #42328127375](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42328127375) 的 `windows-test` 已成功。**这不代表真实 SCM/虚拟账号/ACL 或 Windows 10/11、各 Server 版本已完成安装、升级与故障恢复验收。** 请使用正式安装器，不手工拼装服务代替安装流程。
 :::
 
 ## 运行方式
 
-下一版本程序通过 Windows Service Control Manager（SCM）运行。服务接收启动、停止和系统关机事件，启动到监听就绪才报告运行，停止时等待程序清理。交互式控制台路径与服务路径共享应用启动逻辑，但普通控制台进程不等于 Windows 服务。
+v0.5.0 程序实现原生 Windows Service Control Manager（SCM）服务模式。服务接收启动、停止和系统关机事件，启动到监听就绪才报告运行，停止时等待程序清理。交互式控制台路径与服务路径共享应用启动逻辑，但普通控制台进程不等于 Windows 服务。
 
 | 项目 | 约定值 |
 | --- | --- |
@@ -33,7 +33,7 @@
 
 ## 安装与只读检查
 
-兼容 Release 发布后，使用 [受审阅的安装入口](./installation)。安装完成后可用 Windows 自带的只读命令确认服务；在尚未安装的机器上看到“不存在”并不说明程序崩溃。
+使用 v0.5.0 的 [受审阅安装入口](./installation)。安装完成后可用 Windows 自带的只读命令确认服务；在尚未安装的机器上看到“不存在”并不说明程序崩溃。
 
 ```powershell
 Get-Service -Name QQONPanel
@@ -58,10 +58,10 @@ Start-Service -Name QQONPanel
 
 ## 更新与回退边界
 
-下一版本升级器应获取互斥锁、下载并验证唯一 `panel.exe`、在程序所在文件系统暂存并备份；停服务后等待进程退出与文件解锁，再原子替换、启动并核对健康状态和版本。
+v0.5.0 升级器先获取互斥锁、下载并验证唯一 `panel.exe`、在程序所在文件系统暂存并备份；停服务后等待进程退出与文件解锁，再原子替换、启动并核对健康状态和版本。
 
 失败回退必须先停止新版并等待退出，再恢复旧程序；**不会回滚或重置私有账号数据**。遇到超时、服务未退出、文件被锁或回退失败，保留事务记录并阅读 [故障排查](./troubleshooting#windows-errors)，不要“解锁后强拷贝”。
 
 ## 验证范围
 
-临时目录模拟、ZIP/JSON 解析测试和 Windows runner 的单元测试不能证明真实 SCM/虚拟账号/Program Files ACL 已通过，也不能覆盖所有目标系统。对应正式 Release 发布前仍需专用测试机验证安装、重启、权限、升级、回退与异常停止；完整范围见 [支持矩阵](./support-matrix)。
+Windows CI 与隔离测试已通过，但临时目录模拟、ZIP/JSON 解析和 runner 单元测试不能证明真实 SCM/虚拟账号/Program Files ACL 已通过。Windows bootstrap 只读元数据检查也不注册服务。具体桌面/Server 版本的真实安装、重启、权限、升级、回退、异常停止和物理故障恢复仍未验证，需专用测试机验收；完整范围见 [支持矩阵](./support-matrix)。

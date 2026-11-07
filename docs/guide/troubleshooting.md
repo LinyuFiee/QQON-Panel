@@ -2,9 +2,9 @@
 
 ## 提示需要 v0.5.0 或不兼容 Release {#pending-release}
 
-**当前公开版本是 v0.4.0**，首页交互 bootstrap 需要下一版本的 format3 安装产物。提示需要 v0.5.0、缺少 Windows 附件或不兼容版本时，应停止并查看 [发布状态](./releases)，或使用 [当前 v0.4.0 Linux 路径](./legacy-v0-4)。
+**当前正式版本为 [v0.5.0](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.5.0)**，已有 format3 与 Windows x64 附件。仍提示需要 v0.5.0、缺少 Windows 附件或不兼容版本时，应停止并查看 [发布状态](./releases)，核对实际下载来源、选择的版本及是否仍使用 v0.4.0 管理器；旧版升级需 [显式迁移管理器](./upgrade-migration#manager-migration)。
 
-这不是网络重试能解决的问题。不要把 `latest` 改成不存在的版本、下载任意分支安装器、改清单格式或跳过摘要检查。Pages 已部署也不等于新 Release 已发布。
+版本/协议不兼容不是反复重试能解决的问题。不要把 `latest` 改成不存在的版本、下载任意分支安装器、改清单格式或跳过摘要检查；网络下载失败则按下一节排查。Pages 部署与程序 Release 仍是独立流程。
 
 ## 入口下载失败
 
@@ -18,11 +18,11 @@
 
 网络管道的标准输入承载脚本，不承载菜单答案。交互入口需 `/dev/tty` 或 Windows 控制台；CI/非交互环境应先下载审阅，再使用该正式安装器实际支持的明确参数。
 
-`--yes` / `-Yes` 不代表关闭来源、权限、平台、数据格式或摘要校验。v0.4.0 不支持下一版菜单与状态参数，不能混用帮助说明。
+`--yes` / `-Yes` 不代表关闭来源、权限、平台、数据格式或摘要校验。v0.4.0 不支持 v0.5.0 的菜单与状态参数，不能混用帮助说明。
 
 ## Linux 平台或依赖被拒绝
 
-核对 [支持矩阵](./support-matrix)。安装需要 root、活动 systemd 与受支持架构；容器没有 systemd 或 RPM 支持尚未发布时应停止。
+核对 [支持矩阵](./support-matrix)。v0.5.0 已提供 APT/DNF 安装路径，仍需要 root、活动 systemd、矩阵内发行版与受支持架构；无 systemd 的容器或矩阵外系统应停止，不能强行接管。
 
 APT/DNF 失败先检查现有源、锁、网络与系统时间，不执行整机升级、替换源或关闭 SELinux 来满足面板安装。最小依赖安装失败不应迫使旧面板停服；保留完整错误但清除代理凭据后再报告。
 
@@ -42,7 +42,7 @@ sudo journalctl -u server-panel.service -n 80 --no-pager
 
 ## Windows 服务或权限错误 {#windows-errors}
 
-本节适用于**待发布的 v0.5** 实际安装后，不表示已有 Windows 正式产物。
+本节适用于已发布的 **v0.5.0 Windows** 安装路径；正式产物和 CI 通过不意味着真实 SCM/权限验收已完成，详见 [Windows 服务](./windows-services)。
 
 ```powershell
 Get-Service -Name QQONPanel
@@ -50,7 +50,7 @@ sc.exe qc QQONPanel
 sc.exe queryex QQONPanel
 ```
 
-- 找不到服务：先确认安装器是否明确完成注册；没有发布/安装成功时是合理结果。
+- 找不到服务：先确认安装器是否明确完成注册；尚未安装或安装未成功时，服务不存在是合理结果。
 - 访问被拒绝：确认管理员 PowerShell 5.1 x64、NTFS、路径所有者及受保护 ACL。不要给 `Everyone` 授权或改成 SYSTEM/root 风格常驻来绕过问题。
 - 重解析点或不明旧目录：停止接管，先备份并人工确认目录来源，不递归删除私有数据。
 - 停止超时、文件被占用：确认服务/程序是否退出，保留事务；不要删锁、强行覆盖运行中程序或停用安全软件。
@@ -73,4 +73,4 @@ sc.exe queryex QQONPanel
 
 向 [项目 Issues](https://github.com/LinyuFiee/QQON-Panel/issues) 提供：系统与架构、实际 Release 版本/来源、安装或升级阶段、可复现步骤、脱敏错误和对应 CI 提交（若相关）。明确区分“编译通过”“临时目录模拟”“真实机器安装”。
 
-不要上传账号 JSON、初始化令牌、TOTP/恢复码、Cookie、私钥、完整 ProgramData/数据目录或含代理密码的日志。发布前的功能问题请注明“v0.5 待发布代码”，不要把它描述成 v0.4.0 的可用功能。
+不要上传账号 JSON、初始化令牌、TOTP/恢复码、Cookie、私钥、完整 ProgramData/数据目录或含代理密码的日志。报告时注明实际 v0.5.0/v0.4.0 版本；未发布开发代码须注明具体提交，不把开发行为当作正式版本功能。

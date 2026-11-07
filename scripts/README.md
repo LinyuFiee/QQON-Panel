@@ -2,7 +2,7 @@
 
 完整中文文档：**https://linyufiee.github.io/QQON-Panel/**
 
-> v0.5.0 是交互安装和 Windows 支持的下一发行版；只有对应 Release 发布后，下列网络入口才会放行。已发布 v0.4.0 不会被修改。
+> **[v0.5.0 已发布](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.5.0)**，提供 Linux / Windows 交互安装入口。v0.4.0 保留为旧版，不覆盖其公开产物。
 
 ## 一行启动交互
 
@@ -58,7 +58,9 @@ v0.4.0的六资产协议不能读取新九资产协议。新Linux安装器只允
 
 ## 维护边界
 
-SHA-256不是独立发布签名；磁盘故障／系统损坏下不承诺绝对恢复。Windows Docker本轮不开放，Linux服务页不是通用Windows服务编辑器。真实SCM安装、APT/DNF、SELinux和物理断电需要测试主机验收；隔离测试不是全系统生产认证。
+[v0.5.0 发布 CI #42328127375](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42328127375) 的 `test-build`、`windows-test`、`publish` 均成功。Linux/Windows CI 与隔离测试不等于真实安装验收；具体系统版本安装、真实 SCM、APT/DNF、SELinux 和物理断电恢复仍未验证。
+
+SHA-256不是独立发布签名；磁盘故障／系统损坏下不承诺绝对恢复。Windows Docker本轮不开放，Linux服务页不是通用Windows服务编辑器。
 
 测试：
 

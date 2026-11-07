@@ -1,8 +1,8 @@
 # 安装说明
 
-::: warning v0.5 待发布
-本页交互安装、RPM 和 Windows 路径属于下一版本。当前 v0.4.0 的六个附件不能满足新入口的格式要求，**不要期待首页命令现在完成安装**。需要现成产物请使用 [v0.4.0 Linux 指南](./legacy-v0-4)。
-:::
+**[v0.5.0 已发布](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.5.0)**，提供本页的 Linux APT/DNF 与 Windows x64 交互安装路径。直接开始见 [一键命令](./quickstart#next-release)；旧版保留在 [v0.4.0 指南](./legacy-v0-4)。
+
+Linux/Windows CI 已通过，但不等于具体系统版本安装、真实 SCM、SELinux 或物理故障恢复已验收，详见 [支持矩阵](./support-matrix)。
 
 ## 下载与信任
 
@@ -32,7 +32,7 @@ less "$entry_dir/install.sh"
 sudo bash "$entry_dir/install.sh"
 ```
 
-若仅有 `wget`，下一版本可用的简短入口为：
+若仅有 `wget`，可用：
 
 ```sh
 wget -qO- https://linyufiee.github.io/QQON-Panel/install.sh | bash
@@ -60,9 +60,9 @@ notepad.exe $entryFile
 
 如果组织执行策略或安全软件阻止运行，应按组织批准的脚本签名/执行流程处理；本文不建议改变全局 ExecutionPolicy 或停用安全软件。`irm | iex` 也不是绕过组织安全要求的理由。
 
-## Linux 安装流程（待发布） {#linux-installation}
+## Linux 安装流程 {#linux-installation}
 
-目标菜单为安装、升级、只读状态和退出。首次安装前检查发行版、root、systemd 和架构；确认写操作后再补齐所缺依赖。
+菜单提供安装、升级、只读状态和退出。首次安装前检查发行版、root、systemd 和架构；确认写操作后再补齐所缺依赖。
 
 - Debian/Ubuntu 使用现有 APT 源；Rocky/AlmaLinux 使用现有 DNF 源。
 - 最小依赖为 Python 3、CA 证书以及确实缺失的账号/系统工具；不会安装 Go、Node、数据库或 Docker。
@@ -81,9 +81,9 @@ Linux 既定路径如下，升级/迁移不得随意接管未知同名文件：
 | 私有数据 | `/var/lib/server-panel` |
 | 账号与 systemd unit | `server-panel` / `server-panel.service` |
 
-## Windows 安装流程（待发布）
+## Windows 安装流程 {#windows-安装流程-待发布}
 
-目标为管理员交互安装或明确参数操作，使用原生 PowerShell/.NET，不引入 Python/WSL/Node。首次端口和 Origin 的安全默认值与 Linux 相同。
+管理员可交互安装或使用明确参数，使用原生 PowerShell/.NET，不引入 Python/WSL/Node。首次端口和 Origin 的安全默认值与 Linux 相同。
 
 程序作为原生 SCM 服务 `QQONPanel` 运行，虚拟服务账号为 `NT SERVICE\QQONPanel`，不是把任意控制台程序包装成假服务。NTFS 权限、受保护目录和服务停止等待失败时应停止，不用删除锁文件或放宽 ACL 继续。
 
@@ -91,7 +91,7 @@ Linux 既定路径如下，升级/迁移不得随意接管未知同名文件：
 
 ## 无人值守与状态
 
-下一版本约定 Linux 保留明确的 `--version`、`--yes` 等参数并提供只读状态；Windows 提供 `-Action Install|Update|Status`、`-Port`、`-Origin`、`-Yes`。**以已发布且审阅过的安装器帮助为准**，不要把这些参数传给 v0.4.0 后假设生效。
+v0.5.0 的 Linux 安装器保留明确的 `--version`、`--yes` 等参数并提供只读状态；Windows 提供 `-Action Install|Update|Status`、`-Port`、`-Origin`、`-Yes`。**以已发布且审阅过的安装器帮助为准**，不要把这些参数传给 v0.4.0 后假设生效。
 
 没有交互终端的管道不会从网络输入流读答案，应改用受审阅的本地脚本与明确参数。只读状态不应安装依赖、迁移记录、恢复事务、改权限或编辑服务。
 

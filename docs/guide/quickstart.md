@@ -1,30 +1,24 @@
 # 快速开始
 
-::: warning 先选对版本
-**当前已发布的是 v0.4.0，仅提供 Linux 安装产物。** v0.5 交互安装、RPM 发行版适配和 Windows 服务安装尚未发布。首页一行命令需要兼容的正式 Release；现在执行应得到版本不兼容提示，而不是安装成功。
-:::
+当前稳定版 **[v0.5.0](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.5.0)** 已发布。选择系统，复制一条命令，再按终端提示操作。
 
-## 现在安装 v0.4.0
+## 一键交互安装 {#next-release}
 
-1. 核对 [支持矩阵](./support-matrix)：Debian 12/13 或 Ubuntu 22.04/24.04，amd64/arm64，root 权限及正在运行的 systemd。
-2. 按 [v0.4.0 固定版本指南](./legacy-v0-4) 下载、核对并审阅该版本的安装器。不要混用 `main` 的新脚本与旧版 Release。
-3. 默认保留 `127.0.0.1:5173` 回环监听；用 SSH 隧道或已经配置好的独立 HTTPS 反向代理访问。
-4. 按服务启动输出定位私有初始化令牌，设置自己的管理员账号与强密码。
+**Linux：在 root 的交互式 Bash 中执行（需已有 `curl`）**
 
-服务器安装 Release **不需要 Go、Node、npm、数据库或 Docker**。下载入口前仍需下载工具；不能声称没有 `curl`/`wget` 也能直接执行 Linux 一行命令。
+```sh
+curl -fsSL https://linyufiee.github.io/QQON-Panel/install.sh | bash
+```
 
-## v0.5 发布后的交互入口 {#next-release}
+**Windows：在管理员 Windows PowerShell 5.1（x64）中执行**
 
-待 [发布状态](./releases) 确认存在兼容产物后，再使用 [首页命令](../index)。入口从固定项目的正式 Release 获取安装器；不接受任意镜像或通过降低校验来绕过 v0.4.0 不兼容。
+```powershell
+irm https://linyufiee.github.io/QQON-Panel/install.ps1 | iex
+```
 
-交互流程的目标是：
+随后选择安装、升级或只读状态；首次安装可选择端口（默认 `5173`）和本地／已有 HTTPS 代理访问方式。安装程序不需要 Go、Node、npm、数据库或 Docker。
 
-- 选择安装、升级、只读状态或退出；没有终端时明确要求参数，不从下载管道读取回答。
-- Linux 在 root 的交互式 Bash 中运行；Windows 在管理员 Windows PowerShell 5.1 x64 中运行。
-- 首次安装选择端口（`1024–65535`，默认 `5173`）与本地/SSH 或现有 HTTPS 代理模式。监听地址仍固定为 `127.0.0.1`。
-- 只有确认写操作后才补齐必要依赖或安装服务；查询状态不应安装依赖、迁移记录或修改权限。
-
-更多约束见 [安装说明](./installation)，不要把此流程当成已经发布的 v0.4.0 功能。
+命令会执行本项目的远程引导脚本。[先下载审阅、wget 入口与安装要求](./installation) · [支持矩阵](./support-matrix) · [发布与 CI 记录](./releases)
 
 ## 访问面板
 
@@ -34,7 +28,7 @@
 ssh -L 5173:127.0.0.1:5173 your-user@your-server
 ```
 
-随后打开 `http://127.0.0.1:5173/`。若未来安装时选了其他端口，请同步替换远端端口，检查本地端口是否占用。Windows 本机安装可直接访问其回环地址；远程 Windows 的 SSH 隧道需要管理员自行配置 SSH 服务，本项目不会代装。
+随后打开 `http://127.0.0.1:5173/`。若安装时选了其他端口，请同步替换远端端口，检查本地端口是否占用。Windows 本机安装可直接访问其回环地址；远程 Windows 的 SSH 隧道需要管理员自行配置 SSH 服务，本项目不会代装。
 
 配置了 HTTPS Origin 时，通过对应的 HTTPS 域名访问，不要用不匹配的 Host 或放开 Origin 检查来解决访问问题。安装器不会配置 DNS、证书、代理或防火墙。
 
@@ -42,7 +36,11 @@ ssh -L 5173:127.0.0.1:5173 your-user@your-server
 
 - 没有默认用户名或默认密码；使用本机私有初始化令牌创建管理员。
 - Linux 服务日志可用 `sudo journalctl -u server-panel.service -n 80 --no-pager` 查看。令牌位置以启动输出为准，不把令牌贴到工单或截图中。
-- v0.5 Windows 的初始化提示与本机私有目录检查需在发布后按实际输出操作，不能依赖 Linux 日志命令。
+- Windows 按安装器和本机私有目录中的实际提示初始化，不能依赖 Linux 日志命令；目录与服务检查见 [Windows 服务](./windows-services)。
 - 配置 TOTP 后离线保存恢复码；密码或 TOTP 变更会撤销会话。
 
 接下来阅读 [安全边界](./security) 与 [升级和迁移](./upgrade-migration)。
+
+## 旧版 v0.4.0 {#现在安装-v0-4-0}
+
+需要固定旧版时使用 [v0.4.0 安装说明](./legacy-v0-4)；已有旧版升级到 v0.5.0 时，先 [显式迁移管理器](./upgrade-migration#manager-migration)，再升级程序。

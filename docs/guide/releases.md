@@ -1,29 +1,16 @@
 # 发布状态与产物边界
 
-::: warning 当前 v0.4.0 · v0.5 尚未发布
-本页记录的可用正式版本是 **v0.4.0**。交互入口、RPM 适配、Windows 服务/原生指标和 format3 属于下一版本；源码提交、CI 成功、文档更新或 Pages 部署都不能作为它们已经发布的证明。没有兼容 Release 时，新入口应明确拒绝继续。
-:::
+**[v0.5.0 正式 Release](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.5.0) 已发布**，包含 Linux amd64/arm64 与 Windows x64 产物、交互安装器和 format3 清单。新安装使用 [快速开始](./quickstart)。
 
-## 当前已发布：v0.4.0
+## 当前已发布：v0.5.0 {#下一版本-v0-5-待发布}
 
-[v0.4.0 正式 Release](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.4.0) 使用清单 **format2**、数据 schema **1**，包含六个附件：
+- 正式 tag 指向提交 `07e3665b582ce68198704fa38180e15f135167d6`。
+- [发布 CI #42328127375](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42328127375) 的 `test-build`、`windows-test`、`publish` 均为 `success`。
+- 九个附件重新下载后通过 `verify-only`；Windows bootstrap 只读 `Get-QPReleaseMetadata` 检查 v0.5.0 通过，本地面板版本检查为 `state=up_to_date`、`assetsReady=true`。
+
+发行协议为 **format3**，数据 schema 仍为 **1**。正式 Release 包含以下九个附件：
 
 | 附件 | 内容 |
-| --- | --- |
-| `panel-linux-amd64.tar.gz` | Linux amd64 程序，包内仅普通 `panel` |
-| `panel-linux-arm64.tar.gz` | Linux arm64 程序，包内仅普通 `panel` |
-| `install.sh` | 该版本 Linux 安装/升级管理器 |
-| `update.sh` | Linux 本地升级包装入口 |
-| `release.json` | 版本、仓库、提交、数据格式、大小与摘要 |
-| `SHA256SUMS` | 发布附件的 SHA-256 校验清单 |
-
-当前安装路径见 [v0.4.0 指南](./legacy-v0-4)。旧产物保持不变，不通过覆盖 v0.4.0 附件来追加 Windows 支持。
-
-## 下一版本：v0.5 待发布
-
-目标协议 **format3** 保持数据 schema **1**，完整 Release 必须包含以下九个附件。下表是格式约定，**不是可下载链接，也不表示附件已经存在**。
-
-| 附件 | 约定内容 |
 | --- | --- |
 | `panel-linux-amd64.tar.gz` | 单个普通 `panel`，USTAR，模式 `0755` |
 | `panel-linux-arm64.tar.gz` | 同上，对应 arm64 |
@@ -35,7 +22,22 @@
 
 归档和展开后的程序分别限制为 64 MiB，Linux tar 总展开上限另含 10 KiB 归档开销。安装器上限 512 KiB、更新包装脚本 32 KiB、清单 32 KiB、校验清单 16 KiB、API 响应 1 MiB；超限、链接、多成员、路径穿越或身份不匹配均应拒绝。校验规则不是“能解压就行”。
 
-v0.5 目标功能和真实平台验收要分开看，参见 [支持矩阵](./support-matrix)。本页不声明所有 Windows/RPM 版本已完成实机验证。
+**发布、CI 和只读检查通过不等于真实安装验收。** 具体系统版本安装、真实 SCM/ACL、APT/DNF、SELinux 和物理故障恢复仍未验证，参见 [支持矩阵](./support-matrix)。
+
+## 旧版发行：v0.4.0 {#当前已发布-v0-4-0}
+
+[v0.4.0 正式 Release](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.4.0) 使用清单 **format2**、数据 schema **1**，保留六个附件：
+
+| 附件 | 内容 |
+| --- | --- |
+| `panel-linux-amd64.tar.gz` | Linux amd64 程序，包内仅普通 `panel` |
+| `panel-linux-arm64.tar.gz` | Linux arm64 程序，包内仅普通 `panel` |
+| `install.sh` | 该版本 Linux 安装/升级管理器 |
+| `update.sh` | Linux 本地升级包装入口 |
+| `release.json` | 版本、仓库、提交、数据格式、大小与摘要 |
+| `SHA256SUMS` | 发布附件的 SHA-256 校验清单 |
+
+固定旧版安装路径见 [v0.4.0 指南](./legacy-v0-4)。旧产物保持不变，不通过覆盖 v0.4.0 附件来追加 Windows 支持。
 
 ## Pages 入口与 Release 安装器
 
@@ -52,12 +54,12 @@ v0.5 目标功能和真实平台验收要分开看，参见 [支持矩阵](./sup
 
 版本号采用稳定的 `v主.次.修订` 格式；预发布标签不能被当作稳定通道保证。需要查看公开状态时使用 [Release 列表](https://github.com/LinyuFiee/QQON-Panel/releases)，不要构造不存在版本的下载链接。
 
-## 什么时候才能改成“已发布”
+## 发布确认与后续维护 {#什么时候才能改成-已发布}
 
-维护者需要核对具体提交、CI/打包校验结果、完整附件及其实际可下载性，并确认针对哪些目标系统完成了实机验收，再同步更新首页和相关页面。新 tag/Release 需要针对确切提交的单独发布确认，不能因为 Pages workflow 成功而自动发布程序。
+v0.5.0 已按上述正式 tag、CI、完整附件校验与只读检查记录为已发布；未覆盖的系统安装与恢复验收仍须单独记录。后续新 tag/Release 需要针对确切提交的发布确认，核对完整附件及实际可下载性后再同步更新文档。Pages workflow 成功不会自动发布程序，也不能替代真实系统验证。
 
 ## 构建工具不属于用户服务器依赖
 
-- 下一版本源码与发行构建需要 **Go 1.26+**；Windows 原生能力使用官方 `golang.org/x/sys`。
+- v0.5.0 源码与发行构建需要 **Go 1.26+**；Windows 原生能力使用官方 `golang.org/x/sys`。
 - 本文档构建使用 Node.js/npm 与 VitePress，依赖只放在 `docs` 下。
 - 安装已发布程序的用户服务器不需要 Go、Node 或 npm。不要把开发工具要求写成面板运行要求。

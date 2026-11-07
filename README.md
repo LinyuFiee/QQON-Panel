@@ -4,7 +4,7 @@
 
 [文档](https://linyufiee.github.io/QQON-Panel/) · [下载](https://github.com/LinyuFiee/QQON-Panel/releases/latest) · [发布指南](RELEASING.md)
 
-> 当前稳定发行是 **v0.4.0**。本分支正在准备 **v0.5.0**：交互一键安装、更多 Linux 发行版及 Windows 原生支持。下方新入口在 v0.5.0 发布前会明确提示版本未就绪，不会用旧文件假装安装成功。项目仍处于早期阶段，请先在测试服务器验证。
+> **[v0.5.0 正式版](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.5.0) 已发布**：交互一键安装、APT/DNF 适配和 Windows x64 原生产物。选择系统，执行下方命令后按终端提示操作。
 
 ## 一键交互安装 · v0.5.0
 
@@ -24,17 +24,17 @@ irm https://linyufiee.github.io/QQON-Panel/install.ps1 | iex
 
 这些命令会执行本项目维护的引导代码，请确认域名和仓库来源。引导器把校验后的安装器下载到受保护的临时位置再运行，交互从终端读取。Linux 起始命令仍需 curl；只有 wget 的系统及不使用管道的审阅安装方式见[快速开始](https://linyufiee.github.io/QQON-Panel/guide/quickstart)。
 
-**现在安装已发布 v0.4.0**：[旧版安装说明](https://linyufiee.github.io/QQON-Panel/guide/legacy-v0-4)。旧版与新管理器的迁移需要明确确认，不会覆盖账号或悄悄替换已发布文件。
+**旧版 v0.4.0**：[固定版本安装说明](https://linyufiee.github.io/QQON-Panel/guide/legacy-v0-4)。迁移到 v0.5.0 需明确确认更换管理器，不会覆盖账号或悄悄替换已发布文件。
 
 ## 支持范围
 
-| 系统 | 架构 | v0.5.0 适配目标 |
+| 系统 | 架构 | v0.5.0 已发布范围 |
 | --- | --- | --- |
 | Debian 12/13、Ubuntu 22.04/24.04 | amd64 / arm64 | APT、systemd、Linux 指标 |
 | Rocky Linux 9/10、AlmaLinux 9/10 | amd64 / arm64 | DNF、systemd、CA 与账号工具适配 |
 | Windows Server 2019/2022/2025、Windows 10/11 | x64 | 原生 SCM 服务、NTFS 权限、Windows 指标 |
 
-实现范围不等于每个系统版本都已实机验收，详见[支持矩阵](https://linyufiee.github.io/QQON-Panel/guide/support-matrix)。Windows Docker 暂不开放；非 systemd 容器和停止维护的 Linux 版本不在首轮范围内。
+[发布 CI #42328127375](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42328127375) 的 `test-build`、`windows-test`、`publish` 均成功。具体系统安装、真实 SCM、SELinux 与物理故障恢复仍未验证，详见[支持矩阵](https://linyufiee.github.io/QQON-Panel/guide/support-matrix)。Windows Docker 暂不开放；非 systemd 容器和停止维护的 Linux 版本不在首轮范围内。
 
 ## 功能
 

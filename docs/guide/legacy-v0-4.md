@@ -1,7 +1,7 @@
-# 当前 v0.4.0 安装
+# 旧版 v0.4.0 安装 {#当前-v0-4-0-安装}
 
-::: info 当前可下载的正式版本
-本页固定使用 **v0.4.0** 的安装器与程序，避免 `latest` 将来指向不兼容的 format3。它不提供下一版本的 Windows 安装包、RPM 适配或交互菜单。
+::: info 固定旧版说明
+当前稳定版是 **[v0.5.0](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.5.0)**，新安装请用 [快速开始](./quickstart)。本页保留 **v0.4.0** 的固定版本安装器与程序，避免 `latest` 选到旧管理器不兼容的 format3。旧版不提供 Windows 安装包、RPM 适配或交互菜单。
 :::
 
 ## 支持条件
@@ -36,7 +36,7 @@ less "$install_dir/install.sh"
 sudo bash "$install_dir/install.sh" --repo LinyuFiee/QQON-Panel --version v0.4.0
 ```
 
-已是 root 时省略 `sudo`。旧安装器会列出缺失的最小依赖并请求确认；明确无人值守时才附加 `--yes`。先读安装器帮助，不使用下一版本的 `--status` 或交互菜单假设。
+已是 root 时省略 `sudo`。旧安装器会列出缺失的最小依赖并请求确认；明确无人值守时才附加 `--yes`。先读安装器帮助，不使用 v0.5.0 的 `--status` 或交互菜单假设。
 
 已有独立 HTTPS 反向代理时，可在同一安装命令附加 `--origin https://panel.example.com`，将示例替换为真实域名。安装器不配置 DNS、TLS、代理或防火墙。
 
@@ -55,9 +55,9 @@ sudo journalctl -u server-panel.service -n 80 --no-pager
 
 ## 旧版本升级边界
 
-v0.4.0 的管理器理解 **format2、六个附件**；下一版的 format3、九个附件不是它能自动消费的协议。新的 Release 不会默默更换你本地审阅过的安装器。
+v0.4.0 的管理器理解 **format2、六个附件**；已发布 v0.5.0 的 format3、九个附件不是它能自动消费的协议。新的 Release 不会默默更换你本地审阅过的安装器。
 
-- 当前不要编造 `v0.4.1`、`v0.5.0` 等尚未确认存在的下载目标。
-- 在只有 v0.4.0 时，不需要为了“更新”重复安装；同版本应保持现状。
-- format3 发布后按 [管理器迁移说明](./upgrade-migration#manager-migration) 显式处理，不指望旧 `panel-update` 自动学会新格式。
+- v0.5.0 已发布；不要编造 `v0.4.1` 等未确认存在的下载目标。
+- 需要保留 v0.4.0 时继续固定该版本，无需为了“更新”重复安装。
+- 升级 v0.5.0 时按 [管理器迁移说明](./upgrade-migration#manager-migration) 显式处理，再单独升级程序；不指望旧 `panel-update` 自动学会新格式。
 - 旧开发版 format1、手动部署或被修改的管理器不属于自动迁移范围。

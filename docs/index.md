@@ -9,11 +9,7 @@ title: 一行命令开始
 
 # QQON-Panel
 
-轻量服务器面板。选择系统，审阅安全边界后开始安装。
-
-::: warning v0.5 待发布 · 当前可下载版本为 v0.4.0
-以下交互入口需要 **v0.5.0 或更高版本的正式 Release**。当前只有 v0.4.0，入口会拒绝不兼容版本，不会安装成功；**Windows 安装包尚未发布**。现在要安装，请走 [v0.4.0 Linux 安装指南](./guide/legacy-v0-4)。
-:::
+轻量服务器面板。**[v0.5.0 已发布](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.5.0)**，选择系统，复制一条命令后按提示操作。
 
 ## Linux
 
@@ -25,10 +21,12 @@ curl -fsSL https://linyufiee.github.io/QQON-Panel/install.sh | bash
 
 ## Windows
 
-在 **以管理员身份打开的 Windows PowerShell 5.1（x64）** 中执行。此路径待发布，不代表已实机支持所有 Windows 版本。
+在 **以管理员身份打开的 Windows PowerShell 5.1（x64）** 中执行。
 
 ```powershell
 irm https://linyufiee.github.io/QQON-Panel/install.ps1 | iex
 ```
 
-一行命令会立即执行远程脚本，信任 GitHub Pages、本项目仓库及其 Release。[先下载审阅与安装要求](./guide/installation) · [快速开始](./guide/quickstart) · [安全边界](./guide/security) · [发布状态](./guide/releases)
+随后在终端选择安装、升级或只读状态；首次安装可选端口和本地／已有 HTTPS 代理访问方式。
+
+一行命令会执行本项目的远程引导脚本。[先下载审阅与安装要求](./guide/installation) · [快速开始](./guide/quickstart) · [支持与验证边界](./guide/support-matrix) · [安全边界](./guide/security) · [发布记录](./guide/releases) · [CI 结果](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42328127375)

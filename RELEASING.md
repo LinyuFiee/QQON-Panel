@@ -2,12 +2,20 @@
 
 仓库：[LinyuFiee/QQON-Panel](https://github.com/LinyuFiee/QQON-Panel) · 文档：[GitHub Pages](https://linyufiee.github.io/QQON-Panel/)
 
+## 当前发行：v0.5.0
+
+- [v0.5.0 正式 Release](https://github.com/LinyuFiee/QQON-Panel/releases/tag/v0.5.0) 已发布，正式 tag 指向 `07e3665b582ce68198704fa38180e15f135167d6`。
+- [发布 CI #42328127375](https://github.com/LinyuFiee/QQON-Panel/actions/runs/42328127375) 的 `test-build`、`windows-test`、`publish` 均为 `success`。
+- 九个附件重新下载后通过 `verify-only`；Windows bootstrap 只读 `Get-QPReleaseMetadata` 检查 v0.5.0 通过，本地面板版本检查为 `state=up_to_date`、`assetsReady=true`。
+
+这些是发布、产物与只读检查证据，不是逐系统安装或真实 SCM 验收；APT/DNF、SELinux、真实服务权限和物理故障恢复仍需专用测试环境。
+
 ## 文档与程序分开发布
 
 - `main` 上的文档和一键引导变更触发 `.github/workflows/docs.yml`，只发布静态站点。
 - 程序 Release 由稳定标签 `vMAJOR.MINOR.PATCH` 触发 `.github/workflows/release.yml`。
 - 文档可以先于 Release 更新，但必须显著标记尚未发布的能力。不要把没有发行文件的一键入口写成已经可安装。
-- 当前已发布 v0.4.0 使用 format2、Linux 六资产；正在准备的 v0.5.0 使用 format3、多平台九资产。不要替换或移动已经公开的旧版本。
+- 当前已发布 v0.5.0 使用 format3、多平台九资产；旧版 v0.4.0 保留 format2、Linux 六资产。不要替换或移动已经公开的旧版本。
 
 ## 发版前检查
 
@@ -32,11 +40,11 @@ powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/wind
 
 ## 创建发行
 
-先确认目标仓库、版本、提交及变更说明。然后给已测试的提交打稳定标签，例如：
+仅在另行确认下一版本、提交与变更说明后，设置实际稳定版本号 `VERSION` 再创建新标签。已发布的 `v0.5.0` 不要重打或移动：
 
 ```sh
-git tag -a v0.5.0 -m "QQON-Panel v0.5.0"
-git push origin v0.5.0
+git tag -a "$VERSION" -m "QQON-Panel $VERSION"
+git push origin "$VERSION"
 ```
 
 Actions 将验证标签身份，运行 Linux 测试／vet／race、Windows Go 和 PowerShell 测试；构建自己的产物并安全解压验证 build-info。所有测试通过后，发布任务才创建草稿、上传完整产物、复核再公开。
